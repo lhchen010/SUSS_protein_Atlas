@@ -1,0 +1,318 @@
+# ============================================================
+# SUSS Atlas Engine — single-strain Snakemake pipeline
+# Run:      snakemake --configfile config/config.yaml --cores N
+# New strain: snakemake --config strain='{code: xxx}' input='{pdb_dir: ...}' ...
+# DAG:     first half, all proteins (QC -> Foldseek -> cluster -> classify)
+#          second half: per-family (n>=2: msa/conservation/tree) + all incl. singletons (sasa/esm/annotate)
+# Family count is only known after cluster -> a checkpoint dynamically expands the per-family targets.
+# ============================================================
+import os, glob
+
+configfile: "config/config.yaml"
+
+STRAIN   = config["strain"]["code"]
+PDB_DIR  = config["input"]["pdb_dir"]
+RESULTS  = "results"
+FAM_DIR  = f"{RESULTS}/families"
+TOOLS    = config["tools"]
+STEPS    = config.get("steps", {})
+def on(step, default=True):
+    v = STEPS.get(step, default)
+    return bool(v) if not isinstance(v, str) else v.lower() not in ("false", "no", "off")
+# rnaseq: 'auto' = only if an xlsx is provided
+def rnaseq_on():
+    v = STEPS.get("rnaseq", "auto")
+    if isinstance(v, str) and v.lower() == "auto":
+        return bool(config["input"].get("rnaseq_xlsx"))
+    return on("rnaseq")
+
+# ---------- final targets ----------
+def final_targets(_):
+    t = [f"{RESULTS}/all_families_master.csv", f"{RESULTS}/used_config.yaml"]
+    if on("atlas"): t.append(f"{RESULTS}/{config['output']['atlas_name']}.html")
+    t.append(f"{RESULTS}/cluster_composition.xlsx")
+    t.append(f"{RESULTS}/family_summary.xlsx")
+    if on("cards") and not on("atlas"): t.append(f"{RESULTS}/cards")
+    return t
+
+rule all:
+    input: final_targets
+
+# ---------- first half: all proteins ----------
+# preflight gate — validate input format before anything runs; qc depends on it
+rule validate:
+    input:  pdb_dir=PDB_DIR
+    output: f"{RESULTS}/preflight_ok.txt"
+    run:
+        import sys, yaml
+        sys.path.insert(0, os.path.join(os.path.dirname(workflow.snakefile), "scripts"))
+        import validate_inputs as V
+        errs, warns, info = V.validate(dict(config))
+        os.makedirs(RESULTS, exist_ok=True)
+        with open(output[0], "w") as fh:
+            fh.write(f"info: {info}\nwarnings: {warns}\nerrors: {errs}\n")
+        for w in warns: print("⚠ WARN:", w)
+        if errs:
+            for e in errs: print("✗ ERROR:", e)
+            raise ValueError(f"Preflight BLOCKED — {len(errs)} error(s); fix inputs and rerun.")
+        print(f"preflight OK ({len(warns)} warning(s))")
+
+rule qc:
+    input:  pdb_dir=PDB_DIR, ok=f"{RESULTS}/preflight_ok.txt"
+    output: f"{RESULTS}/qc.csv"
+    params: min_plddt=config["qc"]["min_plddt"],
+            max_length=config["qc"]["max_length"],
+            min_length=config["qc"]["min_length"]
+    script: "scripts/qc.py"
+
+rule foldseek:
+    input:  qc=f"{RESULTS}/qc.csv", pdb_dir=PDB_DIR
+    output: tsv=f"{RESULTS}/foldseek_allvsall.tsv"
+    params: bin=TOOLS["foldseek"]
+    threads: 16
+    shell:
+        # easy-search all-vs-all; output format is the validated 12-column layout
+        "mkdir -p {RESULTS}/tmp_fs && "
+        # --alignment-type 1 = TMalign-based TM (reproduces the validated baseline:
+        # min(qtm,ttm)>=0.5 gives 3202 directed / 1610 edges. Local-alignment default
+        # under-scores and collapsed the network to 730 edges).
+        "{params.bin} easy-search {input.pdb_dir} {input.pdb_dir} "
+        "{output.tsv} {RESULTS}/tmp_fs "
+        "--format-output 'query,target,alntmscore,qtmscore,ttmscore,lddt,fident,alnlen,qlen,tlen,evalue,bits' "
+        "--alignment-type 1 --exhaustive-search 1 -e inf --threads {threads}"
+
+# checkpoint: family count is decided here; downstream per-family targets expand from it
+checkpoint cluster:
+    input:  tsv=f"{RESULTS}/foldseek_allvsall.tsv", qc=f"{RESULTS}/qc.csv"
+    output: families=f"{RESULTS}/families.csv",
+            members=f"{RESULTS}/members.csv",
+            edges=f"{RESULTS}/edges.csv",
+            famdir=directory(FAM_DIR)          # one member-list file per family
+    params: tm=config["clustering"]["foldseek_tm"],
+            sym=config["clustering"]["tm_symmetric"],
+            res=config["clustering"]["leiden_resolution"],
+            seed=config["clustering"]["leiden_seed"],
+            min_size=config["clustering"]["min_family_size"]
+    script: "scripts/cluster.py"
+
+rule blastp:
+    input:  seqs=f"{RESULTS}/seqs.fasta"
+    output: tsv=f"{RESULTS}/blastp_allvsall.tsv"
+    params: blastp=TOOLS["blastp"], makedb=TOOLS["makeblastdb"]
+    threads: 16
+    shell:
+        "{params.makedb} -in {input.seqs} -dbtype prot -out {RESULTS}/tmp_bl_db && "
+        "{params.blastp} -query {input.seqs} -db {RESULTS}/tmp_bl_db "
+        "-outfmt '6 qseqid sseqid pident length evalue bitscore qcovs' "
+        "-out {output.tsv} -num_threads {threads} -evalue 10"
+
+rule classify:
+    input:  blastp=f"{RESULTS}/blastp_allvsall.tsv", edges=f"{RESULTS}/edges.csv"
+    output: f"{RESULTS}/classification.csv"
+    params: evalue=config["classification"]["blast_evalue"]
+    script: "scripts/classify.py"
+
+# ---------- second half: all proteins incl. singletons ----------
+rule sasa_pocket:
+    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv"
+    output: sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json"
+    params: p2rank=TOOLS["p2rank"], java_env=TOOLS["p2rank_java_env"]
+    script: "scripts/sasa_pocket.py"
+
+# canonical mature-sequence fasta: use the provided seqs where available, fill any
+# gap (accession in structures but not in the fasta — e.g. full-length > fasta length
+# cutoff) from the residues of that structure. Always produced, so downstream rules
+# have one guaranteed input regardless of whether the user supplied sequences.
+rule seqs:
+    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv"
+    output: f"{RESULTS}/seqs.fasta"
+    params: provided=config["input"].get("seqs_fasta", "")
+    script: "scripts/build_seqs.py"
+
+rule esm:
+    input:  seqs=f"{RESULTS}/seqs.fasta"
+    output: f"{RESULTS}/esm_all.csv"
+    params: script=TOOLS["esm_scan"], model=config["signals"]["esm_model"],
+            strategy=config["signals"]["plm_strategy"],
+            python=TOOLS.get("esm_python", "python")
+    script: "scripts/esm_scan.py"
+
+rule annotate:
+    input:  pdb_dir=PDB_DIR,
+            seqs=f"{RESULTS}/seqs.fasta",
+            members=f"{RESULTS}/members.csv"
+    output: member=f"{RESULTS}/member_annotation.csv", cluster=f"{RESULTS}/cluster_annotation.csv"
+    params: ips=TOOLS["interproscan"], effp=TOOLS["effectorp"],
+            tmhmm=TOOLS["deeptmhmm"], fsdb=TOOLS["foldseek_db_dir"], fs=TOOLS["foldseek"],
+            effp_python=TOOLS.get("effectorp_python", "python3"),
+            tmhmm_python=TOOLS.get("deeptmhmm_python", TOOLS.get("esm_python", "python"))
+    script: "scripts/annotate.py"
+
+# ---------- second half: per-family (n>=2) ----------
+rule msa:
+    # FoldMason easy-msa PREFIX writes PREFIX_aa.fa (AA MSA), PREFIX_3di.fa (3Di MSA),
+    # PREFIX.nw (guide tree), PREFIX.html. Rename the AA MSA -> {fam}.aln (rate4site input)
+    # and the 3Di MSA -> {fam}.fasta so declared outputs match what the tool produces.
+    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    output: aln=f"{FAM_DIR}/{{fam}}/{{fam}}.aln", fasta=f"{FAM_DIR}/{{fam}}/{{fam}}.fasta"
+    params: bin=TOOLS["foldmason"], pref=lambda w: f"{FAM_DIR}/{w.fam}/{w.fam}_fm"
+    shell:
+        "{params.bin} easy-msa $(cat {input.famfile}) {params.pref} "
+        "{FAM_DIR}/{wildcards.fam}/tmp_fm --report-mode 1 && "
+        "cp {params.pref}_aa.fa {output.aln} && cp {params.pref}_3di.fa {output.fasta}"
+
+rule conservation:
+    # CRITICAL: -a <ref> makes Rate4Site number by REFERENCE RESIDUE (=PDB resi),
+    # not MSA column. The ref MUST be a name that literally appears as a header in the
+    # MSA — FoldMason prefixes headers with the strain code (e.g. 'cor_'), so we pass
+    # 'cor_<hub>'. The HUB (members.txt first line, set by cluster.py = highest mean-TM
+    # member) is the ONE canonical reference used by every rule: conservation numbers
+    # r4s by it, signature filters SASA by it, sasa_pocket detects pockets on it, so
+    # conservation/pocket/hub all overlay on the SAME structure. {fam}.ref records the
+    # bare accession for signature.py. Bare-accession -a would make r4s fall back to the
+    # first MSA record (aa_match~0, r~0) — the bug this rule exists to prevent.
+    input:  aln=f"{FAM_DIR}/{{fam}}/{{fam}}.aln", famfile=f"{FAM_DIR}/{{fam}}.members.txt"
+    output: res=f"{FAM_DIR}/{{fam}}/{{fam}}_r4s.res", ref=f"{FAM_DIR}/{{fam}}/{{fam}}.ref"
+    params: bin=TOOLS["rate4site"], strain=STRAIN
+    shell:
+        r"""hub=$(head -1 {input.famfile} | grep -oE '[A-Z]{{2,3}}[0-9]{{4,}}\.[0-9]+'); """
+        r"""hdr="{params.strain}_$hub"; """
+        r"""grep -q "^>$hdr" {input.aln} || hdr=$(grep -m1 '^>' {input.aln} | sed 's/^>//; s/[[:space:]].*//'); """
+        r"""echo "$hdr" | grep -oE '[A-Z]{{2,3}}[0-9]{{4,}}\.[0-9]+' > {output.ref}; """
+        r"""{params.bin} -s {input.aln} -a "$hdr" -o {output.res} || {params.bin} -s {input.aln} -o {output.res}"""
+
+rule foldtree:
+    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    output: [f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]]
+    params: ftdir=TOOLS["fold_tree"]
+    script: "scripts/run_foldtree.py"
+
+rule signature:
+    input:  r4s=f"{FAM_DIR}/{{fam}}/{{fam}}_r4s.res",
+            ref=f"{FAM_DIR}/{{fam}}/{{fam}}.ref",
+            sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json",
+            pdb_dir=PDB_DIR
+    output: f"{FAM_DIR}/{{fam}}/{{fam}}_signature.csv",
+            f"{FAM_DIR}/{{fam}}/{{fam}}_conservation.pdb"
+    params: strain=STRAIN
+    script: "scripts/signature.py"
+
+# per-family TM + sequence-identity square matrices (cards panel B/C, html_builder)
+rule matrices:
+    input:  foldseek=f"{RESULTS}/foldseek_allvsall.tsv",
+            blastp=f"{RESULTS}/blastp_allvsall.tsv",
+            famfile=f"{FAM_DIR}/{{fam}}.members.txt"
+    output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM.csv", idm=f"{FAM_DIR}/{{fam}}/{{fam}}_ID.csv"
+    script: "scripts/matrices.py"
+
+# per-family US-align TM matrix — ALGORITHM-INDEPENDENT cross-check of the Foldseek TM.
+# Foldseek builds the families (all-vs-all, fast); US-align recomputes true TM WITHIN each
+# family only (O(m^2), m small) so cost stays trivial even at thousands of proteins. Not used
+# for clustering — cards/family_summary show both and flag disagreeing pairs.
+rule tm_refine:
+    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM_usalign.csv"
+    params: usalign=TOOLS.get("usalign", ""), code=STRAIN
+    script: "scripts/tm_refine.py"
+
+# ---------- checkpoint-aware family expansion ----------
+def families_from_checkpoint(wildcards):
+    ck = checkpoints.cluster.get(**wildcards).output.famdir
+    fams = glob_wildcards(os.path.join(ck, "{fam}.members.txt")).fam
+    return fams
+
+def per_family_targets(wildcards):
+    fams = families_from_checkpoint(wildcards)
+    t = []
+    for f in fams:
+        # TM/ID matrices always built (cheap; needed by cards + atlas panels B/C)
+        t += [f"{FAM_DIR}/{f}/{f}_TM.csv", f"{FAM_DIR}/{f}/{f}_ID.csv"]
+        if on("tm_refine"):
+            t.append(f"{FAM_DIR}/{f}/{f}_TM_usalign.csv")
+        if on("conservation"):
+            t.append(f"{FAM_DIR}/{f}/{f}_signature.csv")
+        if on("foldtree"):
+            t += expand(f"{FAM_DIR}/{f}/{f}_{{m}}.nwk", m=config["signals"]["foldtree_metrics"])
+    # RNAseq: depend on each family's OWN {fam}_expression.csv (a declared output of the
+    # rnaseq_family rule) so Snakemake guarantees it before cards/atlas and never lets
+    # another job race/clobber it. The aggregate is an input to that per-family rule.
+    if rnaseq_on():
+        for f in fams:
+            t.append(f"{FAM_DIR}/{f}/{f}_expression.csv")
+    return t
+
+rule rnaseq:
+    # one rule builds every family's {fam}_expression.csv from the strain RNAseq workbook
+    # (expression + accession->locus mapping sheets); aggregate summary gates cards/atlas.
+    input:  xlsx=config["input"].get("rnaseq_xlsx", "") or "config/config.yaml",
+            members=f"{RESULTS}/members.csv"
+    output: all=f"{RESULTS}/rnaseq_expression.csv"
+    params: fam_dir=FAM_DIR
+    script: "scripts/rnaseq.py"
+
+rule rnaseq_family:
+    # slice ONE family's expression out of the aggregate — declared per-family output so
+    # Snakemake tracks it (root fix for the F0-clobber race). No-op-cheap.
+    input:  agg=f"{RESULTS}/rnaseq_expression.csv", members=f"{RESULTS}/members.csv"
+    output: f"{FAM_DIR}/{{fam}}/{{fam}}_expression.csv"
+    script: "scripts/rnaseq_family.py"
+
+# ---------- cards + assembly ----------
+rule cards:
+    input:  per_family=per_family_targets,
+            master=f"{RESULTS}/all_families_master.csv"
+    output: directory(f"{RESULTS}/cards")
+    script: "scripts/cards.py"
+
+def master_inputs(wildcards):
+    d = dict(families=f"{RESULTS}/families.csv", per_family=per_family_targets(wildcards),
+             annotation=f"{RESULTS}/member_annotation.csv")
+    if on("classify"): d["classification"] = f"{RESULTS}/classification.csv"
+    if on("pocket"):   d["sasa"] = f"{RESULTS}/sasa_all.csv"
+    if on("esm"):      d["esm"] = f"{RESULTS}/esm_all.csv"
+    return d
+
+rule master:
+    input:  unpack(master_inputs)
+    output: f"{RESULTS}/all_families_master.csv"
+    script: "scripts/build_master.py"
+
+rule composition:
+    input:  members=f"{RESULTS}/members.csv", annotation=f"{RESULTS}/member_annotation.csv"
+    output: f"{RESULTS}/cluster_composition.xlsx"
+    script: "scripts/composition.py"
+
+def _fs_expr(_):
+    # include the aggregate RNAseq expression when RNAseq is on OR the file already exists
+    # (a prior run may have produced it even if this config doesn't re-point at the xlsx).
+    # ancient() so a forced family_summary rebuild never tries to regenerate the RNAseq file
+    # (its rnaseq rule needs the source xlsx, which a downstream-only rebuild won't have).
+    p = f"{RESULTS}/rnaseq_expression.csv"
+    return {"expr": ancient(p)} if (rnaseq_on() or os.path.exists(p)) else {}
+
+rule family_summary:
+    input:  unpack(_fs_expr),
+            master=f"{RESULTS}/all_families_master.csv", members=f"{RESULTS}/members.csv",
+            annotation=f"{RESULTS}/member_annotation.csv", pockets=f"{RESULTS}/pockets.json"
+    output: f"{RESULTS}/family_summary.xlsx"
+    script: "scripts/family_summary.py"
+
+rule cross_edges:
+    input:  foldseek=f"{RESULTS}/foldseek_allvsall.tsv", members=f"{RESULTS}/members.csv"
+    output: f"{RESULTS}/cross_family_edges.csv"
+    params: tm_thr=config["clustering"]["foldseek_tm"]
+    script: "scripts/cross_edges.py"
+
+rule assemble:
+    input:  cards=f"{RESULTS}/cards", master=f"{RESULTS}/all_families_master.csv",
+            composition=f"{RESULTS}/cluster_composition.xlsx",
+            annotation=f"{RESULTS}/member_annotation.csv",
+            cross=f"{RESULTS}/cross_family_edges.csv"
+    output: html=f"{RESULTS}/{config['output']['atlas_name']}.html"
+    params: mode=config["output"]["html_mode"]
+    script: "scripts/assemble_html.py"
+
+rule save_config:
+    input:  ancient("config/config.yaml")
+    output: f"{RESULTS}/used_config.yaml"
+    shell:  "cp {input} {output}"

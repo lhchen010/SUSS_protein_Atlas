@@ -1,0 +1,100 @@
+# ============================================================
+# SUSS Atlas Engine — single-strain config (TEMPLATE)
+# Copy to config/config.yaml and edit strain / input / tools.
+# Lab-standard analysis defaults are pre-set and normally don't change.
+# Keep one copy of this file with each atlas for provenance.
+# ============================================================
+
+# ---- This run's strain + input (edit every run) ----
+strain:
+  code: cor                       # short strain code (filename prefix <code>_<accession>)
+  species: "Colletotrichum orbiculare"
+  host: "Nicotiana benthamiana / Cucurbitaceae"
+  host_range: ""                  # optional: single-host / broad-host
+  clade: ""                       # optional: species complex / phylogenetic clade
+  is_colletotrichum: true         # false = non-Colletotrichum outgroup
+
+input:
+  pdb_dir: "input/pdb"            # mature AF2 PDBs, named <code>_<accession>.pdb
+  seqs_fasta: "input/seqs.fasta"  # optional; if absent, sequences are extracted from structures
+  rnaseq_xlsx: ""                 # optional; empty = no RNA-seq (card cell left blank)
+  auto_geo: false                 # true = try to fetch RNA-seq from GEO when rnaseq_xlsx is empty
+
+# ---- Lab-standard defaults (settled; normally unchanged) ----
+clustering:
+  foldseek_tm: 0.5                # accepted fold-similarity threshold
+  tm_symmetric: min               # min | max | mean
+  leiden_resolution: 1.0          # standard starting point
+  leiden_seed: 42
+  min_family_size: 2              # 2-3 member families are flagged "n small" on the card
+
+classification:
+  blast_evalue: 0.001             # labels the SUSS divergence spectrum (NOT used to split families).
+                                  # core_SUSS = structurally similar (TM >= threshold) but BLAST-undetectable
+                                  # at this e-value. Set 1.0 to catch all detectable homology, 1e-3 for stricter.
+
+qc:
+  min_plddt: 50
+  max_length: 1000
+  min_length: 50
+
+signals:                          # locked; not recommended to change
+  foldtree_metrics: [foldtree, alntmscore, lddt]
+  esm_model: esm1b_t33_650M_UR50S
+  plm_strategy: masked-marginals
+  pockets: [fpocket, p2rank]
+
+# ---- Which analyses to run (can differ per strain) ----
+steps:
+  qc: true                        # always on
+  cluster: true                   # always on
+  tm_refine: true                 # US-align within-family TM (algorithm-independent cross-check of Foldseek)
+  classify: true                  # BLAST classification; off = no SUSS spectrum labels
+  conservation: true              # Rate4Site conservation (needs MSA)
+  pocket: true                    # fpocket + P2Rank pocket detection
+  esm: true                       # ESM-1b mutational tolerance (GPU, slower)
+  foldtree: true                  # structural phylogeny (x3 metrics per family)
+  annotate: true                  # 4-tool annotation (InterProScan is Linux-only; see README)
+  rnaseq: auto                    # auto = run if rnaseq_xlsx set, else skip; true/false to force
+  cards: true                     # six-panel cards
+  atlas: true                     # interactive HTML
+
+output:
+  html_mode: single               # single (self-contained + foldcomp) | backend (lazy-load)
+  atlas_name: "cor_suss_atlas"
+  project_title: ""               # header title; empty = auto "<species> secretome · SUSS structural atlas".
+                                  #   Editable (e.g. "Lab X — Co SUSS atlas"). Family/protein counts are appended.
+
+# ---- Tool paths — EDIT THESE for your machine ----
+# Conda-installed tools (see environment.yml) resolve on $PATH, so the bare command name
+# works after `conda activate suss-atlas`. Tools you install elsewhere: give the absolute path.
+# Platform: all conda tools below have macOS builds (osx-64 + Apple Silicon). The one
+# Linux-only tool is InterProScan (leave blank on macOS — see README "Annotation on macOS").
+tools:
+  # --- conda / bioconda (bare name works on $PATH; macOS + Linux) ---
+  foldseek: foldseek              # bioconda; all-vs-all structural search + clustering
+  foldmason: foldmason            # bioconda; multiple-structure alignment (MSA / superpose order)
+  rate4site: rate4site            # bioconda; per-site conservation
+  blastp: blastp                  # bioconda: blast; sequence-identity spectrum
+  makeblastdb: makeblastdb        # bioconda: blast
+  fpocket: fpocket                # bioconda; pocket detection (invoked via PATH by sasa_pocket.py)
+
+  # --- installed separately (give the path where you put it) ---
+  usalign: USalign                # github pylelab/USalign; g++ one-file build, macOS+Linux.
+                                  #   Independent-algorithm TM cross-check. Bare name works if on PATH.
+  p2rank: prank                   # github rdkit/p2rank OR bioconda p2rank; needs Java 17
+  p2rank_java_env: ""             # optional: a conda env name that has Java 17 (leave "" if java17 already on PATH)
+  fold_tree: /path/to/fold_tree   # github DessimozLab/fold_tree (clone dir); structural phylogeny
+  esm_scan: /path/to/ESM-Scan/esmscan.py   # github xuebingwu/ESM-Scan; ESM-1b mutational tolerance (PyTorch)
+  esm_python: python              # a python with torch+esm installed (CPU or GPU/MPS ok)
+
+  # --- annotation tools (all optional; annotate step degrades gracefully if blank) ---
+  # InterProScan is 64-bit LINUX ONLY — leave blank on macOS (Pfam domains skipped;
+  #   protein names + effector still populate). Docker/EBI-API alternatives: see README.
+  interproscan: ""                # /path/to/interproscan.sh   (Linux only; blank = skip Pfam)
+  effectorp: /path/to/EffectorP.py         # github; effector prediction (Python, cross-platform)
+  deeptmhmm: ""                   # /path/to/DeepTMHMM predict.py (optional; only fills n_TMR; blank = skip)
+  deeptmhmm_python: python        # a python with torch+h5py (only used if deeptmhmm set)
+
+  # --- external database directory (downloaded by scripts/setup_databases.sh) ---
+  foldseek_db_dir: /path/to/foldseek_db    # holds pdb100 + afdb_swissprot (annotation)

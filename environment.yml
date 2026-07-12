@@ -1,0 +1,37 @@
+# SUSS Atlas — conda environment
+# Creates everything the pipeline needs that is conda-installable and cross-platform
+# (macOS osx-64 + Apple Silicon, and Linux). Verified available on all three platforms.
+#
+#   conda env create -f environment.yml      # or: mamba env create -f environment.yml
+#   conda activate suss-atlas
+#
+# Tools NOT in here (license-gated or GitHub-only) are listed in INSTALL.md:
+#   InterProScan (Linux only), EffectorP, DeepTMHMM, ESM-Scan, US-align, P2Rank, FoldTree.
+name: suss-atlas
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  # --- workflow engine ---
+  - snakemake-minimal>=8.20
+  # --- clustering / graph ---
+  - python-igraph
+  - leidenalg
+  # --- structural / sequence tools (bioconda; macOS + Linux) ---
+  - foldseek
+  - foldmason
+  - rate4site
+  - blast          # provides blastp + makeblastdb
+  - fpocket
+  - mtm-align      # optional multiple-structure-alignment alternative
+  # --- analysis / IO ---
+  - freesasa
+  - biopython
+  - pandas
+  - numpy
+  - scipy
+  - matplotlib
+  - openpyxl
+  - pyyaml
+  - requests

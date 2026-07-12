@@ -1,0 +1,26 @@
+# Pipeline run outputs (regenerated) — never commit
+/results/
+.snakemake/
+.foldtree_pkg/
+
+# User input structures — supply your own (the bundled examples/ set IS committed)
+/input/pdb/
+/input/*.pdb
+
+# External databases (downloaded via scripts/setup_databases.sh)
+/foldseek_db/
+*.dbtype
+
+# User's own config (copy from config/config.yaml.template)
+/config/config.yaml
+
+# Portal runtime
+/portal/runs/
+/portal/suss_engine.tar.gz
+
+# Python / OS junk
+__pycache__/
+*.pyc
+.DS_Store
+._*
+.ipynb_checkpoints/

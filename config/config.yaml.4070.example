@@ -1,0 +1,78 @@
+# ============================================================
+# SUSS Atlas Engine — the EXACT config used for the published
+# C. orbiculare atlas, kept as a reference. Paths are specific
+# to that machine (a Linux workstation); adapt for your own.
+# ============================================================
+
+strain:
+  code: cor
+  species: "Colletotrichum orbiculare"
+  host: "Nicotiana benthamiana / Cucurbitaceae"
+  host_range: ""
+  clade: ""
+  is_colletotrichum: true
+
+input:
+  pdb_dir: "input/pdb"
+  seqs_fasta: "input/seqs.fasta"
+  rnaseq_xlsx: ""
+  auto_geo: false
+
+clustering:
+  foldseek_tm: 0.5
+  tm_symmetric: min
+  leiden_resolution: 1.0
+  leiden_seed: 42
+  min_family_size: 2
+
+classification:
+  blast_evalue: 0.001             # SUSS spectrum label; 1.0 = all detectable homology, 1e-3 = stricter
+
+qc:
+  min_plddt: 50
+  max_length: 1000
+  min_length: 50
+
+signals:
+  foldtree_metrics: [foldtree, alntmscore, lddt]
+  esm_model: esm1b_t33_650M_UR50S
+  plm_strategy: masked-marginals
+  pockets: [fpocket, p2rank]
+
+steps:
+  qc: true
+  cluster: true
+  tm_refine: true                 # US-align within-family TM cross-check
+  classify: true
+  conservation: true
+  pocket: true
+  esm: true
+  foldtree: true
+  annotate: true
+  rnaseq: auto
+  cards: true
+  atlas: true
+
+output:
+  html_mode: single
+  atlas_name: "cor_suss_atlas"
+  project_title: ""
+
+# ---- Tool paths as installed on the reference machine ----
+tools:
+  foldseek: /home/user/miniconda3/bin/foldseek
+  usalign: /home/user/USalign/USalign   # algorithm-independent TM cross-check (within-family)
+  foldmason: /home/user/miniconda3/bin/foldmason
+  rate4site: /home/user/.local/bin/rate4site
+  blastp: /home/user/.local/bin/blastp
+  makeblastdb: /home/user/.local/bin/makeblastdb
+  p2rank: /home/user/p2rank_app/p2rank/prank
+  p2rank_java_env: java17
+  esm_scan: /home/user/ESM-Scan/esmscan.py
+  esm_python: /home/user/miniconda3/envs/boltzgen/bin/python   # GPU env with torch+esm
+  fold_tree: /home/user/fold_tree
+  interproscan: /opt/interproscan/interproscan.sh
+  effectorp: /home/user/.local/share/effectorp/EffectorP.py
+  deeptmhmm: /home/user/.local/share/deeptmhmm/DeepTMHMM-Academic-License-v1.0/predict.py
+  deeptmhmm_python: /home/user/miniconda3/bin/python   # base env has torch + h5py
+  foldseek_db_dir: /data/databases/foldseek

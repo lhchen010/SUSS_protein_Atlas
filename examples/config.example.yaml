@@ -1,0 +1,79 @@
+# SUSS Atlas — bundled EXAMPLE config (100 C. orbiculare secreted proteins, "Set A")
+# Core-only run: needs ONLY the conda environment (environment.yml). No external databases,
+# no license-gated tools. This is the "does my install work?" self-check.
+# Expected output is recorded in examples/EXPECTED.md.
+
+strain:
+  code: cor
+  species: "Colletotrichum orbiculare"
+  host: "Nicotiana benthamiana / Cucurbitaceae"
+  host_range: ""
+  clade: ""
+  is_colletotrichum: true
+
+input:
+  pdb_dir: "examples/input/pdb"
+  seqs_fasta: "examples/input/seqs.fasta"
+  rnaseq_xlsx: ""
+  auto_geo: false
+
+clustering:
+  foldseek_tm: 0.5
+  tm_symmetric: min
+  leiden_resolution: 1.0
+  leiden_seed: 42
+  min_family_size: 2
+
+classification:
+  blast_evalue: 0.001
+
+qc:
+  min_plddt: 50
+  max_length: 1000
+  min_length: 50
+
+signals:
+  foldtree_metrics: [foldtree, alntmscore, lddt]
+  esm_model: esm1b_t33_650M_UR50S
+  plm_strategy: masked-marginals
+  pockets: [fpocket, p2rank]
+
+# Core-only: clustering + independent-TM cross-check + matrices + cards + atlas.
+# Everything needing external DBs / license tools / GPU is OFF for the example.
+steps:
+  qc: true
+  cluster: true
+  tm_refine: true       # US-align independent TM (needs USalign on PATH; see INSTALL)
+  classify: true        # BLAST (conda) — labels SUSS spectrum
+  conservation: true    # Rate4Site (conda)
+  pocket: true          # fpocket (conda)
+  esm: false            # OFF (needs ESM-Scan + GPU/torch)
+  foldtree: true        # FoldTree (git clone; set tools.fold_tree)
+  annotate: false       # OFF (needs Foldseek DBs + InterProScan)
+  rnaseq: false         # OFF (no RNAseq in the mini example)
+  cards: true
+  atlas: true
+
+output:
+  html_mode: single
+  atlas_name: "example_suss_atlas"
+  project_title: "SUSS Atlas — bundled example (100 proteins)"
+
+tools:
+  foldseek: foldseek
+  usalign: USalign
+  foldmason: foldmason
+  rate4site: rate4site
+  blastp: blastp
+  makeblastdb: makeblastdb
+  fpocket: fpocket
+  p2rank: prank
+  p2rank_java_env: ""
+  esm_scan: ""
+  esm_python: python
+  fold_tree: /path/to/fold_tree
+  interproscan: ""
+  effectorp: ""
+  deeptmhmm: ""
+  deeptmhmm_python: python
+  foldseek_db_dir: ""
