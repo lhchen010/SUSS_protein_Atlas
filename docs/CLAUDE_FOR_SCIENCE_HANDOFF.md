@@ -1,7 +1,7 @@
 # SUSS Protein Atlas v1.0.1: Claude for Science handoff
 
 Date: 2026-07-14 (Asia/Taipei)<br>
-Branch: `fix/release-hardening`<br>
+Release: `main`, tag `v1.0.1`<br>
 Production status: **deployed and post-deployment validation passed**
 
 ## Purpose
@@ -110,6 +110,11 @@ produced a 12,788,150-byte self-contained HTML atlas. HTTP checks returned 200 f
 atlas, Excel summary, and config. An oversized request returned 413; invalid delete CSRF
 returned 403.
 
+Production ESM job `20260714-014753-cor-89d46131` completed 28/28 workflow steps in about
+95 seconds. ESM-Scan scored all six family references: 1,028 residue positions total
+(67/229/208/88/212/224 for F0-F5), with non-null scores for all 20 amino-acid substitutions at
+every position. Its atlas completed successfully.
+
 ## Required Claude validation
 
 From the repository root on 4070:
@@ -174,12 +179,13 @@ preserved. The active portal is reachable over Tailscale at:
 Deployed identity:
 
 - Engine version: `1.0.1`
-- Git commit: `b1e18a076b6c6ebd5161b0eefd75fe00598e67d5`
+- Source: GitHub `main`, tag `v1.0.1`; the packaged tag commit is embedded in `GIT_COMMIT` and
+  appears in every new run's `results/used_config.yaml`
 - Engine tar SHA-256: `f7b2d88eefa67013add9b2bdcecfd21b4545462471894055804a6a03198f1cb5`
 - DeepTMHMM compatibility directory: `/home/claude/suss_tools/deeptmhmm-compat`
 - DeepTMHMM launcher: `/home/claude/suss_tools/bin/deeptmhmm-python`
 
-The exact production engine completed job `20260714-014252-cor-54742061` with 100 structures,
+The production engine completed job `20260714-014252-cor-54742061` with 100 structures,
 100 sequences, 6 families, and 50/50 workflow steps in about 129 seconds. Classification,
 conservation, US-align, FoldTree, annotation, DeepTMHMM, fpocket, and P2Rank were enabled; ESM
 was left off for this deployment-focused regression. Results matched the staging metrics above:
