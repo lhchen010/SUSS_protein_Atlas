@@ -67,7 +67,7 @@ tools:
   rate4site: /home/user/.local/bin/rate4site
   blastp: /home/user/.local/bin/blastp
   makeblastdb: /home/user/.local/bin/makeblastdb
-  fpocket: ""                   # not installed on the 4070; P2Rank remains enabled
+  fpocket: fpocket               # resolved from the suss conda environment
   p2rank: /home/user/p2rank_app/p2rank/prank
   p2rank_java_env: java17
   conda: /home/user/miniconda3/bin/conda
@@ -80,6 +80,6 @@ tools:
   interproscan: /opt/interproscan/interproscan.sh
   effectorp: /home/user/.local/share/effectorp/EffectorP.py
   deeptmhmm: /home/user/.local/share/deeptmhmm/DeepTMHMM-Academic-License-v1.0/predict.py
-  deeptmhmm_python: /home/user/miniconda3/bin/python   # base env has torch + h5py
+  deeptmhmm_python: /home/claude/suss_tools/bin/deeptmhmm-python
   foldseek_db_dir: /data/databases/foldseek
   afdb_swissprot_name_map: ""

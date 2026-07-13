@@ -85,6 +85,22 @@ Optional and easy to skip — leave `tools.deeptmhmm: ""`. If you want it, insta
 BioLib/DeepTMHMM instructions and set the path plus `tools.deeptmhmm_python:` (a python with
 torch+h5py). Nothing else depends on it.
 
+DeepTMHMM 1.0 embeds models created with `fair-esm==0.4.0`. If the host Python already has a
+newer ESM package, keep the licensed distribution unchanged and use the included compatibility
+launcher:
+
+```bash
+mkdir -p "$HOME/suss_tools/deeptmhmm-compat" "$HOME/suss_tools/bin"
+python -m pip install --target "$HOME/suss_tools/deeptmhmm-compat" --no-deps fair-esm==0.4.0
+cp scripts/deeptmhmm_compat/sitecustomize.py "$HOME/suss_tools/deeptmhmm-compat/"
+cp scripts/deeptmhmm_compat_python.sh "$HOME/suss_tools/bin/deeptmhmm-python"
+chmod +x "$HOME/suss_tools/bin/deeptmhmm-python"
+```
+
+Set `SUSS_DEEPTMHMM_PYTHON` and `SUSS_DEEPTMHMM_COMPAT_DIR` if those paths differ, then point
+`tools.deeptmhmm_python` at the launcher. It isolates the required ESM package and maps the old
+Matplotlib `seaborn-whitegrid` style name to its current equivalent.
+
 ---
 
 ## 3. External databases

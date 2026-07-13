@@ -40,6 +40,9 @@ def git_commit():
         return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                               timeout=5, check=True).stdout.strip()
     except (FileNotFoundError, subprocess.SubprocessError):
+        for candidate in (Path("GIT_COMMIT"), Path(__file__).resolve().parents[2] / "GIT_COMMIT"):
+            if candidate.is_file():
+                return candidate.read_text(encoding="utf-8").strip() or None
         return None
 
 

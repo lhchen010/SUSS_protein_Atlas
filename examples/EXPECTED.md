@@ -18,7 +18,7 @@ snakemake --configfile examples/config.example.yaml --cores 8 results/example_su
 paths first. To skip those two, set `steps.foldtree: false` and `steps.tm_refine: false` — the
 rest still runs on the conda env alone.)
 
-## Expected result (engine v1.0.1-rc1)
+## Expected result (engine v1.0.1)
 
 | Metric | Expected value |
 |---|---|

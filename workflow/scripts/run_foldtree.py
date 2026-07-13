@@ -36,10 +36,7 @@ if len(accs) < 3:
     raise ValueError(f"{fam}: FoldTree requires at least 3 structures; found {len(accs)}")
 
 work_root = os.path.abspath(os.path.join(famroot, "..", "..", ".."))  # engine workdir
-ftpkg = os.path.join(work_root, ".foldtree_pkg")
-if not os.path.isdir(os.path.join(ftpkg, "workflow")):
-    shutil.copytree(ftdir, ftpkg, dirs_exist_ok=True)
-
+ftpkg = os.path.join(work_root, ".foldtree_pkg", fam)
 tree_targets = [f"{famroot}/{m}_struct_tree.PP.nwk.rooted.final" for m in metrics]
 cmd = [smk, "-s", "workflow/fold_tree", "--cores", "4", *tree_targets,
        "--config", f"folder={famroot}", "filter=False", "custom_structs=True",
@@ -47,8 +44,23 @@ cmd = [smk, "-s", "workflow/fold_tree", "--cores", "4", *tree_targets,
 env = dict(os.environ)
 if extra_path:
     env["PATH"] = extra_path + os.pathsep + env.get("PATH", "")
+log_path = os.path.join(famroot, "foldtree_subworkflow.log")
+if not os.path.isdir(os.path.join(ftpkg, "workflow")):
+    def link_or_copy(source, destination):
+        try:
+            return os.link(source, destination)
+        except OSError:
+            return shutil.copy2(source, destination)
+
+    # Each nested Snakemake needs private writable metadata. Hard-link static package
+    # files where possible so family isolation does not multiply FoldTree's disk usage.
+    shutil.copytree(ftdir, ftpkg, symlinks=True, copy_function=link_or_copy)
 r = subprocess.run(cmd, cwd=ftpkg, env=env, capture_output=True, text=True,
-                   timeout=1800, check=True)
+                   timeout=1800, check=False)
+with open(log_path, "w", encoding="utf-8") as log_handle:
+    log_handle.write("$ " + " ".join(cmd) + "\n\nSTDOUT\n" + r.stdout + "\nSTDERR\n" + r.stderr)
+if r.returncode != 0:
+    raise RuntimeError(f"{fam}: FoldTree exited {r.returncode}; see {log_path}")
 # normalize the produced rooted newick to the declared outputs
 produced = glob.glob(os.path.join(famroot, "**", "*.nwk*"), recursive=True)
 for o, m in zip(outputs, metrics):

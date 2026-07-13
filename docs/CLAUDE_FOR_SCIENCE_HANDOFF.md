@@ -1,8 +1,8 @@
-# SUSS Protein Atlas v1.0.1-rc1: Claude for Science handoff
+# SUSS Protein Atlas v1.0.1: Claude for Science handoff
 
 Date: 2026-07-14 (Asia/Taipei)<br>
 Branch: `fix/release-hardening`<br>
-Production status: **not deployed; existing portal on port 8600 is unchanged**
+Production status: deployment and post-deployment verification are recorded below.
 
 ## Purpose
 
@@ -77,8 +77,8 @@ Additional checks:
   F4 1/1, F5 1/1.
 - FoldTree produced 12 nonempty files: three metrics each for F0-F3. F4/F5 were correctly
   skipped because `n=2`.
-- P2Rank completed for all six families; fpocket was explicitly `not_run`; pocket status was
-  therefore `partial`, not silently complete.
+- The initial P2Rank-only regression completed for all six families and correctly recorded
+  fpocket as `not_run`; the final dual-detector regression is documented below.
 - Annotation-disabled output contained 100 `not_run` rows and zero non-null novelty calls.
 - Re-running the completed core target returned `Nothing to be done`.
 
@@ -89,7 +89,10 @@ Additional checks:
 - 57 AFDB hits and 57 nonblank real protein names.
 - Novel calls: 32 true, 68 false, 0 missing after complete evidence.
 - Cluster annotation has exactly F0-F5; no synthetic `singleton` consensus row.
-- DeepTMHMM was intentionally left blank for the successful run and is recorded as `not_run`.
+- DeepTMHMM completed for 100/100 proteins through the compatibility launcher. It identified
+  five proteins with transmembrane regions, 11 regions total, and a maximum of five in one protein.
+- P2Rank and fpocket both completed for F0-F5. fpocket found 5, 7, 9, 5, 12, and 8 pockets
+  respectively; all six family records have `pocket_status=complete`.
 
 ### Portal regression
 
@@ -98,6 +101,9 @@ Successful jobs:
 - `20260714-011053-cor-7941cd78`: 100 PDB + 100 FASTA, 6 families, atlas complete.
 - `20260714-011259-smoke-bd7f1dcd`: same input with a different strain code; accession
   normalization succeeded, 6 families, atlas complete.
+- `20260714-013818-cor-726cbc90`: final v1.0.1 packaged engine with classification,
+  conservation, dual-pocket analysis, FoldTree, complete annotation, and DeepTMHMM enabled;
+  50 workflow steps completed in 121 seconds and produced a 13,513,416-byte atlas.
 
 The latter job completed in about 31 seconds with optional expensive analyses disabled and
 produced a 12,788,150-byte self-contained HTML atlas. HTTP checks returned 200 for status,
@@ -125,24 +131,29 @@ Claude should then verify:
 - F0-F3 have three nonempty Newick files each; F4/F5 have none.
 - Disabled annotation yields `not_run` and nullable novelty, not false novelty.
 - Full annotation yields 57 named AFDB hits and 32/68 novelty calls with the current databases.
-- `used_config.yaml` reports `engine_version: 1.0.1-rc1`, `pdb_count: 100`, and input hashes.
+- `used_config.yaml` reports `engine_version: 1.0.1`, `pdb_count: 100`, and input hashes.
 - Atlas HTML renders normally; no fallback HTML message appears.
 - A portal upload whose archived files already have another strain prefix is normalized and
   still matches the FASTA accessions.
 
-## Known blocker: DeepTMHMM environment
+## DeepTMHMM compatibility environment
 
-The configured 4070 DeepTMHMM installation fails while generating ESM embeddings:
+The original 4070 DeepTMHMM command failed while generating ESM embeddings:
 
 ```text
 AttributeError: 'Alphabet' object has no attribute 'unique_no_split_tokens'
 ```
 
-The failure is in the licensed DeepTMHMM model/environment interaction with installed
-`esm 2.0.0`, not in SUSS output parsing. The new wrapper correctly stops instead of reporting a
-successful annotation. Before production deployment, Claude should repair or isolate the
-DeepTMHMM environment, run the tool directly on `results/anno/clean.fasta`, then re-enable
-`tools.deeptmhmm`. Do not patch the licensed third-party source inside this PR.
+The licensed release requires `fair-esm==0.4.0`; the general user environment provided
+`esm 2.0.0`. The 4070 deployment now uses `/home/claude/suss_tools/bin/deeptmhmm-python`,
+which isolates `fair-esm 0.4.0` and maps DeepTMHMM's retired Matplotlib style name to its current
+equivalent. The licensed third-party source is unchanged. Claude should verify the sample and
+100-protein results above before approving a future environment upgrade.
+
+FoldTree also now uses an isolated package work directory per family. This prevents nested
+Snakemake metadata collisions during parallel execution and preserves the upstream package's
+dangling test-data symlink instead of trying to dereference it. Each family writes
+`foldtree_subworkflow.log` for diagnosis.
 
 ## Deliberately deferred work
 
@@ -155,8 +166,8 @@ the pre-existing absence of per-rule `log` and `conda` directives.
 
 ## Deployment gate
 
-Do not replace `/home/claude/suss_portal` until Claude has signed off on the checks above and
-DeepTMHMM is either repaired or intentionally disabled in the production config. Deployment
+Do not replace `/home/claude/suss_portal` until Claude has signed off on the checks above.
+Deployment
 should preserve `suss_portal_runs`, replace the engine tar and portal script atomically, restart
 the service, and run one final upload smoke test on port 8600. Rollback material is in the backup
 directory listed above.
