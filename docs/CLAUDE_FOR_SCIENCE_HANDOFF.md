@@ -2,7 +2,7 @@
 
 Date: 2026-07-14 (Asia/Taipei)<br>
 Branch: `fix/release-hardening`<br>
-Production status: deployment and post-deployment verification are recorded below.
+Production status: **deployed and post-deployment validation passed**
 
 ## Purpose
 
@@ -164,10 +164,41 @@ with a manifest, enforce single-chain/single-model PDB input, add user authentic
 or migrate the portal away from Python's deprecated `cgi` module. Snakemake lint still reports
 the pre-existing absence of per-rule `log` and `conda` directives.
 
-## Deployment gate
+## Production deployment result
 
-Do not replace `/home/claude/suss_portal` until Claude has signed off on the checks above.
-Deployment
-should preserve `suss_portal_runs`, replace the engine tar and portal script atomically, restart
-the service, and run one final upload smoke test on port 8600. Rollback material is in the backup
-directory listed above.
+Production was deployed to `/home/claude/suss_portal` on 2026-07-14. Existing run history was
+preserved. The active portal is reachable over Tailscale at:
+
+`http://100.80.77.29:8600`
+
+Deployed identity:
+
+- Engine version: `1.0.1`
+- Git commit: `b1e18a076b6c6ebd5161b0eefd75fe00598e67d5`
+- Engine tar SHA-256: `f7b2d88eefa67013add9b2bdcecfd21b4545462471894055804a6a03198f1cb5`
+- DeepTMHMM compatibility directory: `/home/claude/suss_tools/deeptmhmm-compat`
+- DeepTMHMM launcher: `/home/claude/suss_tools/bin/deeptmhmm-python`
+
+The exact production engine completed job `20260714-014252-cor-54742061` with 100 structures,
+100 sequences, 6 families, and 50/50 workflow steps in about 129 seconds. Classification,
+conservation, US-align, FoldTree, annotation, DeepTMHMM, fpocket, and P2Rank were enabled; ESM
+was left off for this deployment-focused regression. Results matched the staging metrics above:
+
+- family sizes 28/26/23/7/2/2 plus 12 singletons;
+- annotation and DeepTMHMM complete for 100/100 proteins;
+- 57 named AFDB hits and 32 novel / 68 non-novel calls;
+- five proteins with 11 total predicted transmembrane regions;
+- dual pocket status complete for F0-F5;
+- 12/12 declared FoldTree outputs nonempty;
+- atlas, status, summary, and config endpoints all returned HTTP 200;
+- Tailscale access from the deployment client returned HTTP 200.
+
+Immediate pre-deployment rollback material is at:
+
+`/home/claude/suss_backups/20260714-014241-v1.0.1-predeploy`
+
+An earlier untouched backup is also retained at
+`/home/claude/suss_backups/20260714-pre-hardening`. To roll back, stop the PID in
+`/home/claude/suss_portal/suss_portal.pid`, restore the three deployment files from the backup
+(`suss_engine.tar.gz`, `suss_portal.py`, and `launch.sh`), then run `launch.sh`. Do not remove
+the production `runs/` directory.
