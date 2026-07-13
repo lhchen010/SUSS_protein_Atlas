@@ -21,7 +21,7 @@ browser upload → format validation → pipeline run → interactive atlas HTML
 ## Run on the 4070
 ```bash
 # files live in /home/claude/suss_portal/ : suss_portal.py, suss_engine.tar.gz, launch.sh
-bash /home/claude/suss_portal/launch.sh      # (re)starts the server, kills any prior instance
+bash /home/claude/suss_portal/launch.sh      # PID-scoped restart + local health check
 ```
 Environment knobs (set in launch.sh): `SUSS_ENGINE_TAR`, `SUSS_RUNS_DIR`, `SUSS_CONDA`,
 `SUSS_PORT` (8600), `SUSS_CORES` (4), `SUSS_BIND` (0.0.0.0 for tailscale reach).
@@ -38,4 +38,4 @@ From a machine on the tailscale network: **http://100.80.77.29:8600**
 - `cgi` module is deprecated (removed in py3.13); the engine's `suss` env is py3.11 so it
   works today. If moving to py3.13, swap the multipart parse for `multipart`/`email` or a
   small framework.
-- To take it down: `pkill -f suss_portal.py`.
+- To take it down, send `TERM` to the PID stored in `/home/claude/suss_portal/suss_portal.pid`.
