@@ -84,6 +84,7 @@ for fam, gmem in fam_groups:
     subgroups = [([a], a) for a in accs] if fam == "singleton" else [(accs, fam)]
     is_single = (fam == "singleton")
     for acc_list, label_fam in subgroups:
+        current_mem = gmem[gmem.acc.isin(acc_list)]
         g_anno = anno[anno.acc.isin(acc_list)] if len(anno) else pd.DataFrame()
         m = master_by_fam.get(label_fam, {})
         top_name, _ = _top(g_anno, "afdbsp_name")
@@ -96,8 +97,12 @@ for fam, gmem in fam_groups:
         fp_res, fp_score = pock_resis(label_fam, "fpocket")
         p2_res, p2_score = pock_resis(label_fam, "p2rank")
         n = len(acc_list)
-        pct_eff = round(100 * g_anno.is_effector.mean(), 1) if "is_effector" in g_anno and len(g_anno) else np.nan
-        pct_novel = round(100 * g_anno.novel.mean(), 1) if "novel" in g_anno and len(g_anno) else np.nan
+        effector_complete = ("effectorp_status" not in g_anno or
+                             (len(g_anno) and g_anno.effectorp_status.eq("complete").all()))
+        pct_eff = (round(100 * g_anno.is_effector.mean(), 1)
+                   if effector_complete and "is_effector" in g_anno and len(g_anno) else np.nan)
+        known_novel = g_anno.novel.dropna() if "novel" in g_anno else pd.Series(dtype=float)
+        pct_novel = round(100 * known_novel.mean(), 1) if len(known_novel) else np.nan
         # US-align independent TM cross-check (real families only; singletons have no pairs)
         _us_mean, _us_r, _us_disagree = (_usalign_stats(label_fam) if not is_single else (None, None, 0))
         # RNAseq: mean expression per condition across this family's members (blank if no RNAseq)
@@ -127,8 +132,8 @@ for fam, gmem in fam_groups:
             cons_sasa_r=m.get("cons_sasa_r", np.nan),
             pct_effector=m.get("pct_effector", pct_eff),
             pct_novel=m.get("pct_novel", pct_novel),
-            mean_pLDDT=m.get("mean_pLDDT", round(float(gmem.plddt.mean()), 2) if "plddt" in gmem else np.nan),
-            mean_len=m.get("mean_len", int(gmem.length.mean()) if "length" in gmem else np.nan),
+            mean_pLDDT=m.get("mean_pLDDT", round(float(current_mem.plddt.mean()), 2) if "plddt" in current_mem else np.nan),
+            mean_len=m.get("mean_len", int(current_mem.length.mean()) if "length" in current_mem else np.nan),
             pocket_ref=ref,
             fpocket_score=fp_score,
             fpocket_residues=" ".join(map(str, fp_res)),

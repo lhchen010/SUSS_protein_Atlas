@@ -5,6 +5,7 @@ esm_driver.py.)
 """
 import os, glob, re, subprocess
 import pandas as pd
+from runtime_utils import resolve_executable, resolve_file
 
 seqs_fa = snakemake.input.seqs
 out_csv = snakemake.output[0]
@@ -12,6 +13,10 @@ esmpy   = snakemake.params.script
 model   = snakemake.params.model
 strategy= snakemake.params.strategy
 resdir  = os.path.join(os.path.dirname(out_csv), "families")
+if not snakemake.params.enabled:
+    raise RuntimeError("ESM rule was scheduled while steps.esm is disabled")
+esmpy = resolve_file(esmpy, "ESM-Scan")
+python = resolve_executable(snakemake.params.get("python", "python"), "ESM Python")
 
 # read seqs
 seqs = {}
@@ -40,10 +45,12 @@ for fam, ref in sorted(refs.items(), key=lambda x: int(x[0][1:]) if x[0][1:].isd
     pref = os.path.join(outdir, f"{fam}_{ref}")
     mat = pref + "-res-in-matrix.csv"
     if not os.path.exists(mat):
-        subprocess.run([snakemake.params.get("python", "python"), esmpy,
+        subprocess.run([python, esmpy,
                         "--model-location", model, "--sequence", seq,
                         "--scoring-strategy", strategy, "--output-prefix", pref],
-                       capture_output=True, text=True, timeout=1800)
+                       capture_output=True, text=True, timeout=1800, check=True)
+        if not os.path.exists(mat):
+            raise RuntimeError(f"ESM-Scan completed without expected output for {fam}")
     if os.path.exists(mat):
         df = pd.read_csv(mat).rename(columns={df_c: df_c for df_c in []})
         df.insert(0, "family", fam); df.insert(1, "ref", ref)
@@ -54,4 +61,3 @@ if frames:
 else:
     open(out_csv, "w").write("family,ref\n")
 print(f"ESM: {len(frames)} family references scored -> {out_csv}")
-

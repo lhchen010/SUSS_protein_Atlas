@@ -18,7 +18,7 @@ snakemake --configfile examples/config.example.yaml --cores 8 results/example_su
 paths first. To skip those two, set `steps.foldtree: false` and `steps.tm_refine: false` — the
 rest still runs on the conda env alone.)
 
-## Expected result (engine v1.0.0)
+## Expected result (engine v1.0.1-rc1)
 
 | Metric | Expected value |
 |---|---|
@@ -28,7 +28,7 @@ rest still runs on the conda env alone.)
 | Within-family + cross edges (classification rows) | 536 |
 | Atlas HTML size | ~13.5 MB |
 | US-align cross-check matrices | 6 (one per family) |
-| FoldTree trees | 6 |
+| FoldTree trees | 12 files (3 metrics for each family with n >= 3) |
 
 Top families (renumbered by size each run; **F0 = largest**):
 
@@ -48,3 +48,7 @@ signal that your install is working. If you get 6 families with F0≈28, you're 
 Open `results/example_suss_atlas.html` in a browser (Chrome/Firefox): click any node to see the
 integrated card — structure viewer, dual TM matrices (Foldseek + US-align with the consistency r),
 sequence-identity matrix, and the FoldTree.
+
+F4 and F5 each contain only two structures. FoldTree is intentionally skipped for these families:
+its sub-workflow cannot infer a meaningful tree from two members, and an absent tree is no longer
+represented by a misleading zero-byte Newick file.

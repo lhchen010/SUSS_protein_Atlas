@@ -56,6 +56,7 @@ steps:
 output:
   html_mode: single
   atlas_name: "cor_suss_atlas"
+  allow_fallback_html: false
   project_title: ""
 
 # ---- Tool paths as installed on the reference machine ----
@@ -66,13 +67,19 @@ tools:
   rate4site: /home/user/.local/bin/rate4site
   blastp: /home/user/.local/bin/blastp
   makeblastdb: /home/user/.local/bin/makeblastdb
+  fpocket: ""                   # not installed on the 4070; P2Rank remains enabled
   p2rank: /home/user/p2rank_app/p2rank/prank
   p2rank_java_env: java17
+  conda: /home/user/miniconda3/bin/conda
   esm_scan: /home/user/ESM-Scan/esmscan.py
   esm_python: /home/user/miniconda3/envs/boltzgen/bin/python   # GPU env with torch+esm
   fold_tree: /home/user/fold_tree
+  foldtree_snakemake: /home/user/miniconda3/envs/snakemake/bin/snakemake
+  foldtree_foldseek: /home/user/miniconda3/bin/foldseek
+  foldtree_extra_path: /home/user/miniconda3/bin:/home/user/.local/bin
   interproscan: /opt/interproscan/interproscan.sh
   effectorp: /home/user/.local/share/effectorp/EffectorP.py
   deeptmhmm: /home/user/.local/share/deeptmhmm/DeepTMHMM-Academic-License-v1.0/predict.py
   deeptmhmm_python: /home/user/miniconda3/bin/python   # base env has torch + h5py
   foldseek_db_dir: /data/databases/foldseek
+  afdb_swissprot_name_map: ""

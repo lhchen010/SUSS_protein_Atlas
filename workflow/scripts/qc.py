@@ -2,7 +2,7 @@
 Input dir is prepared by the upload portal (no Drive download here — see io_contract R2).
 Filename convention: <strain>_<accession>.pdb ; accession = first token before '_' after strain.
 """
-import os, glob
+import os, glob, re
 import numpy as np
 import pandas as pd
 
@@ -13,7 +13,10 @@ max_len   = snakemake.params.max_length
 min_len   = snakemake.params.min_length
 
 def parse_acc(fn):
-    # <strain>_<accession>.pdb -> accession ; tolerate bare accession.pdb
+    match = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", os.path.basename(fn))
+    if match:
+        return match.group(0)
+    # Fallback for custom IDs: <strain>_<accession>.pdb or bare accession.pdb.
     base = os.path.basename(fn)[:-4] if fn.endswith(".pdb") else os.path.basename(fn)
     parts = base.split("_", 1)
     return parts[1] if len(parts) == 2 else parts[0]

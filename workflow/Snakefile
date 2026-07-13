@@ -26,6 +26,9 @@ def rnaseq_on():
         return bool(config["input"].get("rnaseq_xlsx"))
     return on("rnaseq")
 
+if on("atlas") and not on("cards"):
+    raise ValueError("steps.cards must be true when steps.atlas is enabled")
+
 # ---------- final targets ----------
 def final_targets(_):
     t = [f"{RESULTS}/all_families_master.csv", f"{RESULTS}/used_config.yaml"]
@@ -114,9 +117,11 @@ rule classify:
 
 # ---------- second half: all proteins incl. singletons ----------
 rule sasa_pocket:
-    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv"
+    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv", members=f"{RESULTS}/members.csv"
     output: sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json"
-    params: p2rank=TOOLS["p2rank"], java_env=TOOLS["p2rank_java_env"]
+    params: enabled=on("pocket"), p2rank=TOOLS.get("p2rank", ""),
+            fpocket=TOOLS.get("fpocket", "fpocket"), java_env=TOOLS.get("p2rank_java_env", ""),
+            conda=TOOLS.get("conda", "conda")
     script: "scripts/sasa_pocket.py"
 
 # canonical mature-sequence fasta: use the provided seqs where available, fill any
@@ -132,7 +137,7 @@ rule seqs:
 rule esm:
     input:  seqs=f"{RESULTS}/seqs.fasta"
     output: f"{RESULTS}/esm_all.csv"
-    params: script=TOOLS["esm_scan"], model=config["signals"]["esm_model"],
+    params: enabled=on("esm"), script=TOOLS.get("esm_scan", ""), model=config["signals"]["esm_model"],
             strategy=config["signals"]["plm_strategy"],
             python=TOOLS.get("esm_python", "python")
     script: "scripts/esm_scan.py"
@@ -142,8 +147,10 @@ rule annotate:
             seqs=f"{RESULTS}/seqs.fasta",
             members=f"{RESULTS}/members.csv"
     output: member=f"{RESULTS}/member_annotation.csv", cluster=f"{RESULTS}/cluster_annotation.csv"
-    params: ips=TOOLS["interproscan"], effp=TOOLS["effectorp"],
-            tmhmm=TOOLS["deeptmhmm"], fsdb=TOOLS["foldseek_db_dir"], fs=TOOLS["foldseek"],
+    params: enabled=on("annotate"), ips=TOOLS.get("interproscan", ""),
+            effp=TOOLS.get("effectorp", ""), tmhmm=TOOLS.get("deeptmhmm", ""),
+            fsdb=TOOLS.get("foldseek_db_dir", ""), fs=TOOLS.get("foldseek", ""),
+            afdb_name_map=TOOLS.get("afdb_swissprot_name_map", ""),
             effp_python=TOOLS.get("effectorp_python", "python3"),
             tmhmm_python=TOOLS.get("deeptmhmm_python", TOOLS.get("esm_python", "python"))
     script: "scripts/annotate.py"
@@ -184,7 +191,10 @@ rule conservation:
 rule foldtree:
     input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
     output: [f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]]
-    params: ftdir=TOOLS["fold_tree"]
+    params: ftdir=TOOLS["fold_tree"],
+            snakemake=TOOLS.get("foldtree_snakemake", "snakemake"),
+            foldseek=TOOLS.get("foldtree_foldseek", TOOLS["foldseek"]),
+            extra_path=TOOLS.get("foldtree_extra_path", "")
     script: "scripts/run_foldtree.py"
 
 rule signature:
@@ -203,6 +213,7 @@ rule matrices:
             blastp=f"{RESULTS}/blastp_allvsall.tsv",
             famfile=f"{FAM_DIR}/{{fam}}.members.txt"
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM.csv", idm=f"{FAM_DIR}/{{fam}}/{{fam}}_ID.csv"
+    params: sym=config["clustering"]["tm_symmetric"]
     script: "scripts/matrices.py"
 
 # per-family US-align TM matrix — ALGORITHM-INDEPENDENT cross-check of the Foldseek TM.
@@ -212,7 +223,8 @@ rule matrices:
 rule tm_refine:
     input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM_usalign.csv"
-    params: usalign=TOOLS.get("usalign", ""), code=STRAIN
+    params: usalign=TOOLS.get("usalign", ""), code=STRAIN,
+            sym=config["clustering"]["tm_symmetric"]
     script: "scripts/tm_refine.py"
 
 # ---------- checkpoint-aware family expansion ----------
@@ -231,7 +243,11 @@ def per_family_targets(wildcards):
             t.append(f"{FAM_DIR}/{f}/{f}_TM_usalign.csv")
         if on("conservation"):
             t.append(f"{FAM_DIR}/{f}/{f}_signature.csv")
-        if on("foldtree"):
+        member_file = os.path.join(str(checkpoints.cluster.get(**wildcards).output.famdir),
+                                   f"{f}.members.txt")
+        with open(member_file) as fh:
+            family_size = sum(1 for line in fh if line.strip())
+        if on("foldtree") and family_size >= 3:
             t += expand(f"{FAM_DIR}/{f}/{f}_{{m}}.nwk", m=config["signals"]["foldtree_metrics"])
     # RNAseq: depend on each family's OWN {fam}_expression.csv (a declared output of the
     # rnaseq_family rule) so Snakemake guarantees it before cards/atlas and never lets
@@ -283,12 +299,8 @@ rule composition:
     script: "scripts/composition.py"
 
 def _fs_expr(_):
-    # include the aggregate RNAseq expression when RNAseq is on OR the file already exists
-    # (a prior run may have produced it even if this config doesn't re-point at the xlsx).
-    # ancient() so a forced family_summary rebuild never tries to regenerate the RNAseq file
-    # (its rnaseq rule needs the source xlsx, which a downstream-only rebuild won't have).
     p = f"{RESULTS}/rnaseq_expression.csv"
-    return {"expr": ancient(p)} if (rnaseq_on() or os.path.exists(p)) else {}
+    return {"expr": p} if rnaseq_on() else {}
 
 rule family_summary:
     input:  unpack(_fs_expr),
@@ -300,7 +312,8 @@ rule family_summary:
 rule cross_edges:
     input:  foldseek=f"{RESULTS}/foldseek_allvsall.tsv", members=f"{RESULTS}/members.csv"
     output: f"{RESULTS}/cross_family_edges.csv"
-    params: tm_thr=config["clustering"]["foldseek_tm"]
+    params: tm_thr=config["clustering"]["foldseek_tm"],
+            sym=config["clustering"]["tm_symmetric"]
     script: "scripts/cross_edges.py"
 
 rule assemble:
@@ -309,10 +322,13 @@ rule assemble:
             annotation=f"{RESULTS}/member_annotation.csv",
             cross=f"{RESULTS}/cross_family_edges.csv"
     output: html=f"{RESULTS}/{config['output']['atlas_name']}.html"
-    params: mode=config["output"]["html_mode"]
+    params: mode=config["output"]["html_mode"],
+            allow_fallback=config["output"].get("allow_fallback_html", False)
     script: "scripts/assemble_html.py"
 
 rule save_config:
-    input:  ancient("config/config.yaml")
+    input:  pdb_dir=PDB_DIR,
+            seqs=f"{RESULTS}/seqs.fasta"
     output: f"{RESULTS}/used_config.yaml"
-    shell:  "cp {input} {output}"
+    params: config=dict(config), tools=TOOLS
+    script: "scripts/save_provenance.py"

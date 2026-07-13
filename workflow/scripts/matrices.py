@@ -1,9 +1,10 @@
 """matrices rule — per-family TM and sequence-identity square matrices, from the
-whole-set foldseek TSV (symmetric TM = min(qtm,ttm)) and blastp TSV (pident). Written
+whole-set foldseek TSV (configured symmetric TM) and blastp TSV (pident). Written
 as labeled CSVs {fam}_TM.csv / {fam}_ID.csv that cards.py and html_builder consume.
 Diagonal = 1.0; missing pairs = 0 (TM) / 0 (identity)."""
 import os, re
 import numpy as np, pandas as pd
+from runtime_utils import symmetric_tm
 
 fs_tsv   = snakemake.input.foldseek
 bl_tsv   = snakemake.input.blastp
@@ -11,6 +12,7 @@ famfile  = snakemake.input.famfile
 out_tm   = snakemake.output.tm
 out_id   = snakemake.output.idm
 fam      = snakemake.wildcards.fam
+sym_mode = snakemake.params.sym
 
 accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 def acc_of(s):
@@ -25,7 +27,7 @@ fc = ["q","t","alntm","qtm","ttm","lddt","fident","aln","ql","tl","e","b"]
 fs = pd.read_csv(fs_tsv, sep="\t", names=fc)
 fs["qa"] = fs.q.map(acc_of); fs["ta"] = fs.t.map(acc_of)
 fs = fs[fs.qa.isin(mset) & fs.ta.isin(mset)].copy()
-fs["tm"] = fs[["qtm","ttm"]].min(axis=1)
+fs["tm"] = [symmetric_tm(q, t, sym_mode) for q, t in zip(fs.qtm, fs.ttm)]
 TM = pd.DataFrame(0.0, index=members, columns=members)
 for _, r in fs.iterrows():
     TM.loc[r.qa, r.ta] = max(TM.loc[r.qa, r.ta], r.tm)

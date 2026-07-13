@@ -62,6 +62,7 @@ steps:
 output:
   html_mode: single               # single (self-contained + foldcomp) | backend (lazy-load)
   atlas_name: "cor_suss_atlas"
+  allow_fallback_html: false      # true only for debugging; production renderer errors fail the run
   project_title: ""               # header title; empty = auto "<species> secretome · SUSS structural atlas".
                                   #   Editable (e.g. "Lab X — Co SUSS atlas"). Family/protein counts are appended.
 
@@ -84,7 +85,11 @@ tools:
                                   #   Independent-algorithm TM cross-check. Bare name works if on PATH.
   p2rank: prank                   # github rdkit/p2rank OR bioconda p2rank; needs Java 17
   p2rank_java_env: ""             # optional: a conda env name that has Java 17 (leave "" if java17 already on PATH)
+  conda: conda                    # used only when p2rank_java_env is set
   fold_tree: /path/to/fold_tree   # github DessimozLab/fold_tree (clone dir); structural phylogeny
+  foldtree_snakemake: snakemake   # executable used by the FoldTree sub-workflow
+  foldtree_foldseek: foldseek     # Foldseek executable visible to FoldTree
+  foldtree_extra_path: ""         # optional PATH prefix for FoldTree dependencies
   esm_scan: /path/to/ESM-Scan/esmscan.py   # github xuebingwu/ESM-Scan; ESM-1b mutational tolerance (PyTorch)
   esm_python: python              # a python with torch+esm installed (CPU or GPU/MPS ok)
 
@@ -98,3 +103,4 @@ tools:
 
   # --- external database directory (downloaded by scripts/setup_databases.sh) ---
   foldseek_db_dir: /path/to/foldseek_db    # holds pdb100 + afdb_swissprot (annotation)
+  afdb_swissprot_name_map: ""     # optional CSV/TSV with target,name columns

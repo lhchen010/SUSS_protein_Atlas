@@ -15,6 +15,8 @@ Then edit `config/config.yaml`:
    work by bare name once `conda activate suss-atlas` is done; others need an absolute path.
 4. **`steps:`** — turn analyses on/off. `qc` and `cluster` are always on; the rest are optional
    (no RNAseq? set `rnaseq: false`. macOS? leave `tools.interproscan` blank — see the main README).
+   A blank optional tool means `not_run`; a configured tool that is missing or fails stops the rule.
+   `cards` is required whenever `atlas` is enabled.
 
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).

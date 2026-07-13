@@ -19,7 +19,7 @@ Env knobs (set before launch):
                     to reach it from a browser over tailscale — tailscale is a private
                     encrypted network, so binding its interface is the intended intranet use)
 """
-import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re
+import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ENGINE_TAR = os.environ.get("SUSS_ENGINE_TAR", os.path.expanduser("~/suss_engine.tar.gz"))
@@ -28,10 +28,33 @@ CONDA      = os.environ.get("SUSS_CONDA", "/home/claude/.conda/envs/suss")
 PORT       = int(os.environ.get("SUSS_PORT", "8600"))
 BIND       = os.environ.get("SUSS_BIND", "127.0.0.1")
 CORES      = os.environ.get("SUSS_CORES", "4")
+MAX_UPLOAD_BYTES = int(os.environ.get("SUSS_MAX_UPLOAD_MB", "512")) * 1024 * 1024
+MAX_EXTRACTED_BYTES = int(os.environ.get("SUSS_MAX_EXTRACTED_MB", "2048")) * 1024 * 1024
+MAX_ARCHIVE_FILES = int(os.environ.get("SUSS_MAX_ARCHIVE_FILES", "10000"))
+MAX_ACTIVE_JOBS = int(os.environ.get("SUSS_MAX_ACTIVE_JOBS", "1"))
+CSRF_TOKEN = secrets.token_urlsafe(32)
+ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 os.makedirs(RUNS_DIR, exist_ok=True)
 
 JOBS = {}          # job_id -> dict(state, dir, log, atlas, msg, started, families, meta, ...)
 JOBS_LOCK = threading.Lock()
+
+
+def _safe_extract_engine(archive, destination):
+    root = os.path.realpath(destination)
+    for member in archive.getmembers():
+        target = os.path.realpath(os.path.join(destination, member.name))
+        if target != root and not target.startswith(root + os.sep):
+            raise ValueError(f"unsafe path in engine archive: {member.name}")
+        if member.issym() or member.islnk():
+            raise ValueError(f"links are not allowed in engine archive: {member.name}")
+    archive.extractall(destination)
+
+
+def _normalized_pdb_name(filename, strain_code):
+    match = ACCESSION_RE.search(os.path.basename(filename))
+    accession = match.group(0) if match else os.path.basename(filename)
+    return f"{strain_code}_{accession}.pdb"
 
 # ------------------------------------------------------------------ persistence
 # Each job dir holds: manifest.json (metadata+state), run.log (full log), and the
@@ -144,7 +167,7 @@ def form_page(msg_html=""):
           <label><input type=checkbox name=esm checked> ESM tolerance</label>
           <label><input type=checkbox name=foldtree checked> FoldTree</label>
           <label><input type=checkbox name=annotate checked> Annotate (InterPro/Foldseek/EffectorP)</label>
-          <label><input type=checkbox name=cards checked> Cards</label>
+          <label><input type=checkbox checked disabled> Cards (required by atlas)</label>
           <label><input type=checkbox name=rnaseq_step checked> RNAseq (if xlsx given)</label>
         </div>
       </fieldset>
@@ -388,6 +411,7 @@ def history_rows(limit=None):
                f" &middot; <form method=post action=/delete style='display:inline' "
                f"onsubmit=\"return confirm('Delete run {html.escape(j['job_id'])} and free its disk space on the server? This cannot be undone.')\">"
                f"<input type=hidden name=id value='{html.escape(j['job_id'])}'>"
+               f"<input type=hidden name=csrf value='{CSRF_TOKEN}'>"
                f"<button type=submit style='color:#b00;background:none;border:none;cursor:pointer;padding:0;font-size:13px;text-decoration:underline'>delete</button></form>")
             + f"</td></tr>")
     return "".join(out)
@@ -455,7 +479,7 @@ def _write_config(eng, meta):
         foldseek_tm=meta["tm"], leiden_resolution=meta["res"], min_family_size=meta["minfam"])
     cfg.setdefault("classification", {}).update(blast_evalue=meta["evalue"])
     st = cfg.setdefault("steps", {})
-    st.update(qc=True, cluster=True, atlas=True, rnaseq=meta["rnaseq_mode"],
+    st.update(qc=True, cluster=True, cards=True, atlas=True, rnaseq=meta["rnaseq_mode"],
               **{k: bool(v) for k, v in steps_in.items()})
     cfg.setdefault("output", {}).update(
         html_mode="single", atlas_name=f"{meta['code']}_suss_atlas",
@@ -481,7 +505,8 @@ def run_pipeline(job_id, meta, files):
         open(os.path.join(updir, "structures.tar.gz"), "wb").write(files["pdb_tar"])
         if files.get("seqs"):   open(os.path.join(updir, "seqs.fasta"), "wb").write(files["seqs"])
         if files.get("rnaseq"): open(os.path.join(updir, "rnaseq.xlsx"), "wb").write(files["rnaseq"])
-        with tarfile.open(ENGINE_TAR) as t: t.extractall(eng)
+        with tarfile.open(ENGINE_TAR) as t:
+            _safe_extract_engine(t, eng)
         # engine tars are packed with -C suss_engine . so contents land directly in eng/
         pdbdir = os.path.join(eng, "input", "pdb"); os.makedirs(pdbdir, exist_ok=True)
         # stage PDB tarball
@@ -489,14 +514,20 @@ def run_pipeline(job_id, meta, files):
         ptar = os.path.join(wd, "pdb_upload.tar.gz"); open(ptar, "wb").write(files["pdb_tar"])
         skipped = 0
         with tarfile.open(ptar) as t:
-            for m in t.getmembers():
+            members = t.getmembers()
+            regular = [m for m in members if m.isfile()]
+            if len(regular) > MAX_ARCHIVE_FILES:
+                raise ValueError(f"structure archive contains {len(regular)} files; limit is {MAX_ARCHIVE_FILES}")
+            expanded = sum(m.size for m in regular)
+            if expanded > MAX_EXTRACTED_BYTES:
+                raise ValueError("expanded structure archive exceeds the configured size limit")
+            for m in members:
                 base = os.path.basename(m.name)
                 # skip macOS AppleDouble / metadata junk (._foo.pdb, .DS_Store, __MACOSX/)
                 if base.startswith("._") or base == ".DS_Store" or "__MACOSX" in m.name:
                     skipped += 1; continue
                 if m.isfile() and base.lower().endswith(".pdb"):
-                    acc = base
-                    if not acc.startswith(meta["code"] + "_"): acc = f"{meta['code']}_{acc}"
+                    acc = _normalized_pdb_name(base, meta["code"])
                     with open(os.path.join(pdbdir, acc), "wb") as fh:
                         fh.write(t.extractfile(m).read())
         if skipped: _log(j, f"skipped {skipped} macOS metadata file(s) (._*, .DS_Store)")
@@ -540,7 +571,7 @@ def run_pipeline(job_id, meta, files):
         j["atlas_rel"] = atlas_rel
         # build the atlas AND the per-cluster Excel (family_summary.xlsx) — both explicit
         # targets, since the portal doesn't run `rule all`
-        targets = [atlas_rel, "results/family_summary.xlsx"]
+        targets = [atlas_rel, "results/family_summary.xlsx", "results/used_config.yaml"]
         proc = subprocess.Popen([smk, "--configfile", "config/config.yaml", "--cores", CORES,
                                  "-p", "--nocolor", *targets],
                                 cwd=eng, env=env, stdout=subprocess.PIPE,
@@ -650,6 +681,8 @@ class H(BaseHTTPRequestHandler):
         ctype = self.headers.get("Content-Type", "")
         form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
                                 environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
+        if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
+            self._send(page("<h1>Invalid request token</h1>"), code=403); return
         jid = os.path.basename(form.getfirst("id", ""))   # basename guards against path traversal
         j = JOBS.get(jid)
         if j and j.get("state") in ("running", "staging"):
@@ -677,6 +710,18 @@ class H(BaseHTTPRequestHandler):
             self._handle_delete(); return
         if self.path != "/run":
             self._send(page("<h1>404</h1>"), code=404); return
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            content_length = 0
+        if content_length <= 0 or content_length > MAX_UPLOAD_BYTES:
+            self._send(page("<h1>Upload rejected</h1><p>Request is empty or exceeds the configured upload limit.</p>"), code=413)
+            return
+        with JOBS_LOCK:
+            active = sum(j.get("state") in ("queued", "staging", "validating", "running") for j in JOBS.values())
+        if active >= MAX_ACTIVE_JOBS:
+            self._send(page("<h1>Server busy</h1><p>The analysis slot is in use. Try again after the active run finishes.</p>"), code=429)
+            return
         ctype = self.headers.get("Content-Type", "")
         form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
                                 environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
@@ -706,9 +751,9 @@ class H(BaseHTTPRequestHandler):
             rnaseq_mode=(("true" if ck("rnaseq_step") else "false") if rnaseq_given else "false"),
             steps=dict(classify=ck("classify"), conservation=ck("conservation"),
                        pocket=ck("pocket"), esm=ck("esm"), foldtree=ck("foldtree"),
-                       annotate=ck("annotate"), cards=ck("cards")),
+                       annotate=ck("annotate")),
         )
-        job_id = time.strftime("%Y%m%d-%H%M%S") + f"-{meta['code']}"
+        job_id = time.strftime("%Y%m%d-%H%M%S") + f"-{meta['code']}-{uuid.uuid4().hex[:8]}"
         jdir = os.path.join(RUNS_DIR, job_id); os.makedirs(jdir, exist_ok=True)
         with JOBS_LOCK:
             JOBS[job_id] = dict(state="queued", dir=jdir, log=[], atlas=None, job_id=job_id,
@@ -724,4 +769,3 @@ if __name__ == "__main__":
     print(f"SUSS portal on http://{BIND}:{PORT}  (engine={ENGINE_TAR}, runs={RUNS_DIR}, "
           f"{len(JOBS)} prior run(s) loaded)", flush=True)
     srv.serve_forever()
-

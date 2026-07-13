@@ -7,14 +7,14 @@ validation/robustness layer: the card and family_summary show both, and disagree
 
 Runs US-align in -dir batch mode (one process does the family's all-vs-all), so cost is
 O(m^2) within a family only (families are small; whole-set all-vs-all stays Foldseek's job).
-Symmetric TM = min(TM1, TM2), matching the Foldseek min(qtm,ttm) convention.
+Symmetric TM follows the same configured min/max/mean convention as clustering.
 
-Output {fam}_TM_usalign.csv mirrors {fam}_TM.csv (labeled square matrix, diag=1.0, missing=0).
-Degrades gracefully: if US-align is missing or a family has <2 members, writes an all-diag
-matrix and a note, never blocks the DAG.
+Output {fam}_TM_usalign.csv mirrors {fam}_TM.csv (labeled square matrix, diag=1.0).
+Missing tools, structures, failed commands, and incomplete pair output block the rule.
 """
 import os, re, glob, subprocess, tempfile, shutil
 import numpy as np, pandas as pd
+from runtime_utils import resolve_executable, symmetric_tm
 
 famfile  = snakemake.input.famfile
 pdb_dir  = snakemake.input.pdb_dir
@@ -22,6 +22,7 @@ out_tm   = snakemake.output.tm
 fam      = snakemake.wildcards.fam
 usalign  = snakemake.params.usalign          # absolute path to USalign binary
 strain   = snakemake.params.get("code", "")  # filename prefix <code>_<acc>.pdb
+sym_mode = snakemake.params.sym
 
 accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 def acc_of(s):
@@ -43,13 +44,17 @@ def find_pdb(acc):
 
 pdbs = {a: find_pdb(a) for a in members}
 have = [a for a in members if pdbs[a]]
+missing = [a for a in members if not pdbs[a]]
+if missing:
+    raise FileNotFoundError(f"{fam}: missing PDB files for {', '.join(missing)}")
+usalign = resolve_executable(usalign, "US-align")
 
 TM = pd.DataFrame(0.0, index=members, columns=members)
 for m in members:
     TM.loc[m, m] = 1.0
 
 note = ""
-if len(have) >= 2 and usalign and os.path.exists(usalign):
+if len(have) >= 2:
     # stage the family's structures into a temp dir with predictable names <acc>.pdb,
     # then run US-align -dir all-vs-all in one process.
     tmp = tempfile.mkdtemp(prefix=f"usaln_{fam}_")
@@ -64,7 +69,7 @@ if len(have) >= 2 and usalign and os.path.exists(usalign):
             fh.write("\n".join(acc_by_stem) + "\n")
         # -outfmt 2 = tab table: PDBchain1 PDBchain2 TM1 TM2 RMSD ID1 ID2 IDali L1 L2 Lali
         cmd = [usalign, "-dir", tmp + "/", listf, "-suffix", ".pdb", "-outfmt", "2"]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, check=True)
         stem_re = re.compile(r"^(.*?)\.pdb(?::\S+)?$")
         for line in res.stdout.splitlines():
             if not line or line.startswith("#"):
@@ -82,15 +87,18 @@ if len(have) >= 2 and usalign and os.path.exists(usalign):
                 tm1, tm2 = float(f[2]), float(f[3])
             except ValueError:
                 continue
-            sym = min(tm1, tm2)                          # symmetric TM (matches Foldseek min(qtm,ttm))
+            sym = symmetric_tm(tm1, tm2, sym_mode)
             TM.loc[a1, a2] = max(TM.loc[a1, a2], sym)
             TM.loc[a2, a1] = TM.loc[a1, a2]
-        note = f"US-align on {len(have)}/{len(members)} members"
+        expected = len(have) * (len(have) - 1) // 2
+        observed = int((TM.values[np.triu_indices(len(TM), 1)] > 0).sum())
+        if observed != expected:
+            raise RuntimeError(f"{fam}: US-align returned {observed}/{expected} expected pairs")
+        note = f"US-align on {len(have)}/{len(members)} members ({sym_mode} symmetry)"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 else:
-    note = ("US-align binary missing" if not (usalign and os.path.exists(usalign))
-            else f"only {len(have)} member(s) with a PDB — nothing to align")
+    note = f"only {len(have)} member(s) — nothing to align"
 
 os.makedirs(os.path.dirname(out_tm), exist_ok=True)
 TM.round(3).to_csv(out_tm)

@@ -57,6 +57,7 @@ steps:
 output:
   html_mode: single
   atlas_name: "example_suss_atlas"
+  allow_fallback_html: false
   project_title: "SUSS Atlas — bundled example (100 proteins)"
 
 tools:
@@ -69,11 +70,16 @@ tools:
   fpocket: fpocket
   p2rank: prank
   p2rank_java_env: ""
+  conda: conda
   esm_scan: ""
   esm_python: python
   fold_tree: /path/to/fold_tree
+  foldtree_snakemake: snakemake
+  foldtree_foldseek: foldseek
+  foldtree_extra_path: ""
   interproscan: ""
   effectorp: ""
   deeptmhmm: ""
   deeptmhmm_python: python
   foldseek_db_dir: ""
+  afdb_swissprot_name_map: ""

@@ -13,8 +13,7 @@ string-splice injection to avoid re.sub escaping, FoldTree hub star, Blob downlo
 is PORTED into builders/html_builder.build_atlas(): the renderer JS is kept verbatim as
 four constant template halves under builders/template/ (byte-perfect round-trip verified
 against co_suss_network.html v19), and build_atlas regenerates the D + ANN data objects
-from the rule outputs and splices them into that template. The except clause below remains
-as a safety fallback (tabular index) so the DAG still completes if the builder ever raises.
+from the rule outputs and splices them into that template.
 """
 import os, sys, glob, json
 import pandas as pd
@@ -25,6 +24,7 @@ comp_xlsx  = snakemake.input.composition
 anno_csv   = snakemake.input.annotation
 out_html   = snakemake.output.html
 mode       = snakemake.params.mode
+allow_fallback = bool(snakemake.params.allow_fallback)
 resdir     = os.path.dirname(out_html)
 atlas_name = snakemake.config["output"]["atlas_name"]
 
@@ -39,7 +39,9 @@ try:
         mode=mode, atlas_name=atlas_name, config=dict(snakemake.config))
     print(f"atlas HTML built via html_builder ({mode} mode) -> {out_html}")
 except Exception as e:
-    # fallback: minimal index so the DAG completes; full builder ported separately
+    if not allow_fallback:
+        raise
+    # Explicit debug-only fallback requested by output.allow_fallback_html.
     master = pd.read_csv(master_csv)
     ncards = len(glob.glob(os.path.join(cards_dir, "*.png")))
     rows = "\n".join(
@@ -56,4 +58,3 @@ except Exception as e:
     os.makedirs(os.path.dirname(out_html), exist_ok=True)
     open(out_html, "w").write(html)
     print(f"atlas HTML fallback index -> {out_html} (builder pending: {e})")
-
