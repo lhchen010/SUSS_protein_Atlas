@@ -30,9 +30,25 @@ Automated tests verify that:
 3. biological result columns are preserved;
 4. InterPro, both Foldseek searches, EffectorP, and DeepTMHMM status columns are preserved.
 
-The 4070 production validation must additionally verify for every family that the number of
-`annotation` rows equals the number of family members, and that the complete required annotation
-column set is present.
+## 4070 staging regression
+
+The atlas was rebuilt on 4070 from successful 100-protein production job
+`20260714-092945-cor-2a801063`. Every embedded workbook was decoded and inspected with pandas and
+openpyxl.
+
+| Family | Members | Annotation rows | Missing workbook sheets |
+|---|---:|---:|---:|
+| F0 | 28 | 28 | 0 |
+| F1 | 26 | 26 | 0 |
+| F2 | 23 | 23 | 0 |
+| F3 | 7 | 7 | 0 |
+| F4 | 2 | 2 | 0 |
+| F5 | 2 | 2 | 0 |
+
+All six annotation sheets contained the complete 25-column production schema, including every
+required annotation value and execution-status field. Existing ZIP structures, transforms,
+pockets, FoldTree records, RNA-seq rows, and superposition records also passed the v1.0.2
+regression contract.
 
 ## Claude acceptance checks
 
