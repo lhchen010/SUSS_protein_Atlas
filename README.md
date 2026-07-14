@@ -131,7 +131,7 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/all_families_master.csv` | Machine-readable integrated family table |
 | `results/member_annotation.csv` | Per-protein annotation values and component execution states |
-| `results/families/<family>/` | Foldseek and US-align matrices, BLAST similarity, conservation, complete pocket outputs, FoldTree trees, structures, and RNA-seq |
+| `results/families/<family>/` | Downloadable family workbook with per-member annotation, Foldseek and US-align matrices, BLAST similarity, complete pocket outputs, FoldTree trees, conservation, structures, and RNA-seq |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
 
 ## Quickstart
