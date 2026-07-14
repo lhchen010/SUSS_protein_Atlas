@@ -30,11 +30,12 @@ Automated tests verify that:
 3. biological result columns are preserved;
 4. InterPro, both Foldseek searches, EffectorP, and DeepTMHMM status columns are preserved.
 
-## 4070 staging regression
+## 4070 production regression
 
-The atlas was rebuilt on 4070 from successful 100-protein production job
-`20260714-092945-cor-2a801063`. Every embedded workbook was decoded and inspected with pandas and
-openpyxl.
+The deployed portal completed fresh 100-protein production job
+`20260714-100412-cor-436dde93` with six families. The job recorded engine version `1.0.3` and Git
+commit `6c3aecadcbd9cb9c6ebd01eb9a49a8b8d8e9b6ce`. Every embedded workbook was decoded and inspected
+with pandas and openpyxl.
 
 | Family | Members | Annotation rows | Missing workbook sheets |
 |---|---:|---:|---:|
