@@ -237,8 +237,11 @@ def per_family_targets(wildcards):
     fams = families_from_checkpoint(wildcards)
     t = []
     for f in fams:
-        # TM/ID matrices always built (cheap; needed by cards + atlas panels B/C)
-        t += [f"{FAM_DIR}/{f}/{f}_TM.csv", f"{FAM_DIR}/{f}/{f}_ID.csv"]
+        # TM/ID matrices and the FoldMason alignment are core atlas assets. The AA
+        # structural MSA supplies residue correspondence for hub-referenced superposition
+        # even when Rate4Site conservation itself is disabled.
+        t += [f"{FAM_DIR}/{f}/{f}_TM.csv", f"{FAM_DIR}/{f}/{f}_ID.csv",
+              f"{FAM_DIR}/{f}/{f}.aln"]
         if on("tm_refine"):
             t.append(f"{FAM_DIR}/{f}/{f}_TM_usalign.csv")
         if on("conservation"):

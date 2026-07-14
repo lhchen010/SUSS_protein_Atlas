@@ -41,7 +41,7 @@ Critical implementation notes (kept — hard-won this session):
 - single mode: structures embedded (foldcomp-compressible); backend mode: metadata only,
   structures lazy-load from the 4070 portal.
 """
-import os, io, json, glob, base64, math
+import os, io, json, glob, base64, math, re, zipfile
 import numpy as np, pandas as pd
 
 _TPL = os.path.join(os.path.dirname(__file__), "template")
@@ -60,6 +60,229 @@ def _seq_from_pdb(pdbtext):
             except ValueError: continue
             seq[resi] = _AA3TO1.get(ln[17:20].strip(), "X")
     return "".join(seq[k] for k in sorted(seq))
+
+
+def _read_fasta_records(path):
+    """Read FASTA/MSA records without changing headers or aligned sequences."""
+    records = {}
+    if not path or not os.path.exists(path):
+        return records
+    header = None
+    chunks = []
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith(">"):
+                if header is not None:
+                    records[header] = "".join(chunks)
+                header = line[1:].split()[0]
+                chunks = []
+            elif header is not None:
+                chunks.append(line)
+    if header is not None:
+        records[header] = "".join(chunks)
+    return records
+
+
+def _records_by_member(records, members):
+    """Map FoldMason headers (often strain-prefixed) back to member accessions."""
+    mapped = {}
+    for member in members:
+        exact = records.get(member)
+        if exact is not None:
+            mapped[member] = exact
+            continue
+        hits = [seq for header, seq in records.items() if member in header]
+        if len(hits) == 1:
+            mapped[member] = hits[0]
+    return mapped
+
+
+def _ca_coordinates(pdbtext):
+    coords = []
+    for line in pdbtext.splitlines():
+        if line.startswith("ATOM") and line[12:16].strip() == "CA":
+            try:
+                coords.append([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+            except (ValueError, IndexError):
+                continue
+    return np.asarray(coords, dtype=float)
+
+
+def _aligned_ca_pairs(ref_pdb, mobile_pdb, ref_aln=None, mobile_aln=None):
+    """Return corresponding CA coordinates, preferably from the FoldMason MSA."""
+    ref_ca = _ca_coordinates(ref_pdb)
+    mob_ca = _ca_coordinates(mobile_pdb)
+    if ref_aln and mobile_aln and len(ref_aln) == len(mobile_aln):
+        pairs = []
+        ri = mi = 0
+        for ra, ma in zip(ref_aln, mobile_aln):
+            rpos = ri if ra not in "-." else None
+            mpos = mi if ma not in "-." else None
+            if rpos is not None:
+                ri += 1
+            if mpos is not None:
+                mi += 1
+            if rpos is not None and mpos is not None and rpos < len(ref_ca) and mpos < len(mob_ca):
+                pairs.append((rpos, mpos))
+        if len(pairs) >= 3:
+            return (ref_ca[[p[0] for p in pairs]], mob_ca[[p[1] for p in pairs]], "foldmason")
+    n = min(len(ref_ca), len(mob_ca))
+    if n < 3:
+        raise ValueError("at least three paired CA atoms are required for superposition")
+    return ref_ca[:n], mob_ca[:n], "ca_order"
+
+
+def _superpose_pdb(mobile_pdb, ref_pdb, mobile_aln=None, ref_aln=None):
+    """Rigidly align a PDB to a reference and return transformed text plus fit metadata."""
+    ref_xyz, mob_xyz, method = _aligned_ca_pairs(ref_pdb, mobile_pdb, ref_aln, mobile_aln)
+    def fit(mask):
+        ref_fit = ref_xyz[mask]
+        mob_fit = mob_xyz[mask]
+        ref_center = ref_fit.mean(axis=0)
+        mob_center = mob_fit.mean(axis=0)
+        u, _, vt = np.linalg.svd((mob_fit - mob_center).T @ (ref_fit - ref_center))
+        rotation = u @ vt
+        if np.linalg.det(rotation) < 0:
+            u[:, -1] *= -1
+            rotation = u @ vt
+        return rotation, ref_center - mob_center @ rotation
+
+    # FoldMason columns provide correspondence, while iterative rejection prevents long
+    # flexible loops from pulling the conserved core away from the hub. Four angstroms
+    # is deliberately permissive; if an initial fit has too few inliers, retain the
+    # closest half and iterate rather than failing a divergent but valid family.
+    mask = np.ones(len(ref_xyz), dtype=bool)
+    for _ in range(8):
+        rot, tran = fit(mask)
+        distances = np.linalg.norm(mob_xyz @ rot + tran - ref_xyz, axis=1)
+        new_mask = distances <= 4.0
+        if new_mask.sum() < 3:
+            keep = max(3, int(math.ceil(len(ref_xyz) * 0.5)))
+            new_mask = np.zeros(len(ref_xyz), dtype=bool)
+            new_mask[np.argsort(distances)[:keep]] = True
+        if np.array_equal(new_mask, mask):
+            break
+        mask = new_mask
+    rot, tran = fit(mask)
+    fitted = mob_xyz @ rot + tran
+    squared = np.sum((fitted - ref_xyz) ** 2, axis=1)
+    rmsd = float(np.sqrt(np.mean(squared[mask])))
+    rmsd_all = float(np.sqrt(np.mean(squared)))
+    output = []
+    for line in mobile_pdb.splitlines():
+        if line.startswith(("ATOM", "HETATM")) and len(line) >= 54:
+            try:
+                xyz = np.asarray([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+            except ValueError:
+                output.append(line)
+                continue
+            x, y, z = xyz @ rot + tran
+            line = f"{line[:30]}{x:8.3f}{y:8.3f}{z:8.3f}{line[54:]}"
+        output.append(line)
+    return "\n".join(output) + "\n", {
+        "method": method, "n_ca": int(mask.sum()), "n_ca_total": len(ref_xyz),
+        "rmsd": round(rmsd, 4), "rmsd_all": round(rmsd_all, 4),
+        "rotation": rot.round(10).tolist(), "translation": tran.round(10).tolist(),
+    }
+
+
+def _structures_zip_b64(fam, structures):
+    """Create a family ZIP containing one independently usable PDB per member."""
+    if not structures:
+        return ""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for member, pdbtext in structures.items():
+            archive.writestr(f"{fam}_structures/{member}.pdb", pdbtext.rstrip() + "\n")
+        manifest = "family\tmember\tfile\n" + "".join(
+            f"{fam}\t{member}\t{member}.pdb\n" for member in structures)
+        archive.writestr(f"{fam}_structures/manifest.tsv", manifest)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _enrich_pocket_entry(results_dir, fam, entry):
+    """Backfill all pocket predictions from raw outputs for pre-v1.0.2 runs."""
+    entry = json.loads(json.dumps(entry or {}))
+    ref = entry.get("ref", "")
+
+    p2 = entry.get("p2rank", {}) or {}
+    if not p2.get("pockets"):
+        candidates = glob.glob(os.path.join(results_dir, "p2rank", fam, "out", "*_predictions.csv"))
+        if candidates:
+            table = pd.read_csv(candidates[0])
+            table.columns = [str(c).strip() for c in table.columns]
+            predictions = []
+            for idx, pred in table.iterrows():
+                tokens = str(pred.get("residue_ids", "")).split()
+                residues = sorted({int(x.split("_")[-1]) for x in tokens
+                                   if x.split("_")[-1].isdigit()})
+                predictions.append({
+                    "pocket_id": int(pred.get("rank", idx + 1)),
+                    "score": float(pred.get("score", 0)),
+                    "lining_residues": residues,
+                })
+            if predictions:
+                top = max(predictions, key=lambda p: p["score"])
+                p2.update(top_score=top["score"], n_pockets=len(predictions),
+                          lining_residues=top["lining_residues"], pockets=predictions)
+                entry["p2rank"] = p2
+
+    fp = entry.get("fpocket", {}) or {}
+    if ref and not fp.get("pockets"):
+        root = os.path.join(results_dir, "fpocket", fam, f"{ref}_out")
+        info = os.path.join(root, f"{ref}_info.txt")
+        if os.path.exists(info):
+            text = open(info, encoding="utf-8", errors="replace").read()
+            scores = {int(n): float(score) for n, score in
+                      re.findall(r"Pocket\s+(\d+)\s*:\s*\n\s*Score\s*:\s*([-\d.]+)", text)}
+            predictions = []
+            for pocket_id, score in sorted(scores.items()):
+                residues = set()
+                atom_file = os.path.join(root, "pockets", f"pocket{pocket_id}_atm.pdb")
+                if os.path.exists(atom_file):
+                    for line in open(atom_file, encoding="utf-8", errors="replace"):
+                        if line.startswith(("ATOM", "HETATM")):
+                            try:
+                                residues.add(int(line[22:26]))
+                            except (ValueError, IndexError):
+                                pass
+                predictions.append({"pocket_id": pocket_id, "score": score,
+                                    "lining_residues": sorted(residues)})
+            if predictions:
+                top = max(predictions, key=lambda p: p["score"])
+                fp.update(top_score=top["score"], n_pockets=len(predictions),
+                          lining_residues=top["lining_residues"], pockets=predictions)
+                entry["fpocket"] = fp
+    return entry
+
+
+def _pocket_raw_tables(results_dir, fam, entry):
+    """Load detector-native pocket tables for lossless workbook export."""
+    tables = {}
+    p2_candidates = glob.glob(os.path.join(results_dir, "p2rank", fam, "out", "*_predictions.csv"))
+    if p2_candidates:
+        p2_table = pd.read_csv(p2_candidates[0])
+        p2_table.columns = [str(c).strip() for c in p2_table.columns]
+        tables["p2rank_pockets"] = p2_table
+
+    ref = (entry or {}).get("ref", "")
+    info = os.path.join(results_dir, "fpocket", fam, f"{ref}_out", f"{ref}_info.txt") if ref else ""
+    if info and os.path.exists(info):
+        text = open(info, encoding="utf-8", errors="replace").read()
+        parts = re.split(r"Pocket\s+(\d+)\s*:\s*", text)
+        rows = []
+        for idx in range(1, len(parts), 2):
+            row = {"pocket_id": int(parts[idx])}
+            for key, value in re.findall(r"^\s*([^:\n]+?)\s*:\s*([^\n]*)$", parts[idx + 1], re.MULTILINE):
+                column = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+                row[column] = value.strip()
+            rows.append(row)
+        if rows:
+            tables["fpocket_pockets"] = pd.DataFrame(rows)
+    return tables
 
 
 def _read_tpl(name):
@@ -277,18 +500,88 @@ def _newick_to_svg(nwk, hub=None):
     return "".join(P)
 
 
-def _xlsx_b64(fam, tm, idm, sig, exp):
-    """Per-family download workbook (TM / seq-id / signature / expression) -> base64."""
+def _xlsx_b64(fam, members, tm, usm, idm, blast_pairs, sig, exp, pocket_entry,
+              pocket_raw, trees, fit_stats):
+    """Build the complete, auditable per-family analysis workbook."""
     try:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xl:
-            if tm is not None:  tm.to_excel(xl, sheet_name="TM", index=False)
-            if idm is not None: idm.to_excel(xl, sheet_name="seq_identity", index=False)
-            if sig is not None: sig.to_excel(xl, sheet_name="per_site", index=False)
-            if exp is not None: exp.to_excel(xl, sheet_name="RNAseq", index=False)
+            pd.DataFrame({"family": [fam] * len(members), "member": members}).to_excel(
+                xl, sheet_name="members", index=False)
+            if tm is not None:
+                tm.to_excel(xl, sheet_name="foldseek_TM", index=False)
+            if usm is not None:
+                usm.to_excel(xl, sheet_name="usalign_TM", index=False)
+            if idm is not None:
+                idm.to_excel(xl, sheet_name="blast_identity", index=False)
+            if blast_pairs is not None and len(blast_pairs):
+                blast_pairs.to_excel(xl, sheet_name="blast_pairs", index=False)
+            if sig is not None:
+                sig.to_excel(xl, sheet_name="per_site", index=False)
+            if exp is not None:
+                exp.to_excel(xl, sheet_name="RNAseq", index=False)
+
+            pocket_entry = pocket_entry or {}
+            summaries = []
+            predictions = []
+            for method in ("fpocket", "p2rank"):
+                result = pocket_entry.get(method, {}) or {}
+                summaries.append(dict(
+                    family=fam, reference=pocket_entry.get("ref", ""), method=method,
+                    status=pocket_entry.get(f"{method}_status", "not_run"),
+                    n_pockets=result.get("n_pockets"), top_score=result.get("top_score"),
+                    top_lining_residues=" ".join(map(str, result.get("lining_residues", [])))))
+                for pred in result.get("pockets", []):
+                    predictions.append(dict(
+                        family=fam, reference=pocket_entry.get("ref", ""), method=method,
+                        pocket_id=pred.get("pocket_id"), score=pred.get("score"),
+                        n_residues=len(pred.get("lining_residues", [])),
+                        lining_residues=" ".join(map(str, pred.get("lining_residues", [])))))
+            pd.DataFrame(summaries).to_excel(xl, sheet_name="pocket_summary", index=False)
+            pd.DataFrame(predictions, columns=["family", "reference", "method", "pocket_id", "score",
+                                                      "n_residues", "lining_residues"]).to_excel(
+                xl, sheet_name="pocket_predictions", index=False)
+            residue_rows = []
+            for pred in predictions:
+                for residue in str(pred["lining_residues"]).split():
+                    residue_rows.append({"family": fam, "reference": pred["reference"],
+                                         "method": pred["method"], "pocket_id": pred["pocket_id"],
+                                         "residue_number": int(residue)})
+            pd.DataFrame(residue_rows, columns=["family", "reference", "method", "pocket_id",
+                                                "residue_number"]).to_excel(
+                xl, sheet_name="pocket_residues", index=False)
+            for sheet, table in (pocket_raw or {}).items():
+                table.to_excel(xl, sheet_name=sheet[:31], index=False)
+
+            pd.DataFrame([{"metric": metric, "newick": newick} for metric, newick in trees.items()]).to_excel(
+                xl, sheet_name="foldtree", index=False)
+            fit_rows = []
+            for member, stats in fit_stats.items():
+                row = {"member": member, **stats}
+                for key in ("rotation", "translation"):
+                    if key in row:
+                        row[key] = json.dumps(row[key], separators=(",", ":"))
+                fit_rows.append(row)
+            pd.DataFrame(fit_rows).to_excel(
+                xl, sheet_name="superposition", index=False)
+            pd.DataFrame([
+                ("foldseek_TM", "Within-family symmetric Foldseek TM-score matrix used for structural clustering."),
+                ("usalign_TM", "Independent within-family US-align TM-score matrix."),
+                ("blast_identity", "Best-HSP BLASTp identity matrix."),
+                ("blast_pairs", "Pair-level BLAST and SUSS classification data for structural edges."),
+                ("pocket_summary", "Detector status and top-pocket summary for fpocket and P2Rank."),
+                ("pocket_predictions", "Every pocket reported by each detector, including scores and lining residues."),
+                ("pocket_residues", "One row per detector, pocket, and lining residue."),
+                ("fpocket_pockets", "All descriptors parsed from the detector-native fpocket info file."),
+                ("p2rank_pockets", "Complete detector-native P2Rank predictions table with all original columns."),
+                ("foldtree", "All available FoldTree Newick trees, one row per configured metric."),
+                ("RNAseq", "Per-member, replicate-collapsed RNA-seq expression for this family."),
+                ("per_site", "Reference-residue conservation, SASA, pocket, and other site-level evidence."),
+                ("superposition", "Hub-referenced rigid-body fit method, paired CA count, and RMSD."),
+            ], columns=["sheet", "contents"]).to_excel(xl, sheet_name="README", index=False)
         return base64.b64encode(buf.getvalue()).decode()
-    except Exception:
-        return ""
+    except Exception as exc:
+        raise RuntimeError(f"{fam}: failed to build family workbook") from exc
 
 
 def _hub_from_tm(tm, labels):
@@ -322,6 +615,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         try: pockets = json.load(open(pj))
         except Exception: pockets = {}
     esm_all = load_csv(os.path.join(results_dir, "esm_all.csv"))   # long: family,resi,wt,<AA LLRs>
+    classification_all = load_csv(os.path.join(results_dir, "classification.csv"))
     # whole-set mature sequences (seqs rule) -> {acc: seq}; used for per-member FASTA download
     seqs_all = {}
     sf = os.path.join(results_dir, "seqs.fasta")
@@ -399,14 +693,18 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         # hub = highest mean-TM member (mark on FoldTree); ref_used = first member (analysis ref)
         tm_labels = list(tm.iloc[:, 0].astype(str)) if tm is not None else members
         hub, hub_meanTM = _hub_from_tm(tm, tm_labels) if tm is not None else (members[0] if members else None, None)
-        # foldtree newick + svg (hub gold-starred)
+        # FoldTree Newick outputs. The configured foldtree metric remains the interactive
+        # tree; every available metric is retained in the family workbook.
         newick = ""
+        trees = {}
+        for metric in config.get("signals", {}).get("foldtree_metrics", ["foldtree", "alntmscore", "lddt"]):
+            tree_path = os.path.join(fd, f"{fam}_{metric}.nwk")
+            if os.path.exists(tree_path):
+                trees[str(metric)] = open(tree_path, encoding="utf-8", errors="replace").read().strip()
         nwk_p = os.path.join(fd, f"{fam}_foldtree.nwk")
         if os.path.exists(nwk_p):
             newick = open(nwk_p).read().strip()
             assets["tree_svg"] = _svg_datauri(_newick_to_svg(newick, hub=hub))
-        # per-family download workbook
-        assets["xlsx_b64"] = _xlsx_b64(fam, tm, idm, sig, exp)
 
         # ---- EXTRA: conservation + pocket (fpocket/P2Rank) + ESM + hub + cysteines ----
         ex = dict(ref_used=members[0] if members else "", hub=hub, hub_meanTM=hub_meanTM)
@@ -433,7 +731,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         ex.setdefault("pocket_resi", []); ex.setdefault("pocket_src", None)
         ex.setdefault("pocket_score", None); ex.setdefault("n_pocket", None)
         ex.setdefault("n_cys", 0)
-        pk = pockets.get(fam, {})
+        pk = _enrich_pocket_entry(results_dir, fam, pockets.get(fam, {}))
         p2 = pk.get("p2rank", {}); fp = pk.get("fpocket", {})
         if p2:
             ex.update(p2rank_resi=p2.get("lining_residues", []), p2rank_score=p2.get("top_score"),
@@ -501,6 +799,44 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                              os.path.join(results_dir, "..", "input", "pdb", f"{config.get('strain',{}).get('code','')}_{a}.pdb")):
                     if os.path.exists(cand):
                         struct[a] = open(cand, encoding="utf-8", errors="replace").read(); break
+        # FoldMason-aware rigid-body alignment to the canonical hub. Compact transforms
+        # are embedded once and applied by the viewer and superposed-PDB downloader.
+        transforms = {}
+        fit_stats = {}
+        if struct:
+            ref_member = hub if hub in struct else next(iter(struct))
+            msa = _records_by_member(_read_fasta_records(os.path.join(fd, f"{fam}.aln")), members)
+            ref_pdb = struct[ref_member]
+            identity_rotation = np.eye(3).tolist()
+            identity_translation = [0.0, 0.0, 0.0]
+            transforms[ref_member] = {"rotation": identity_rotation, "translation": identity_translation}
+            ref_n_ca = len(_ca_coordinates(ref_pdb))
+            fit_stats[ref_member] = {"reference": ref_member, "method": "reference",
+                                     "n_ca": ref_n_ca, "n_ca_total": ref_n_ca,
+                                     "rmsd": 0.0, "rmsd_all": 0.0,
+                                     "rotation": identity_rotation, "translation": identity_translation}
+            for member, pdbtext in struct.items():
+                if member == ref_member:
+                    continue
+                _, stats = _superpose_pdb(
+                    pdbtext, ref_pdb, mobile_aln=msa.get(member), ref_aln=msa.get(ref_member))
+                transforms[member] = {"rotation": stats["rotation"], "translation": stats["translation"]}
+                fit_stats[member] = {"reference": ref_member, **stats}
+
+        # Downloads are generated server-side so the self-contained HTML needs no ZIP or
+        # spreadsheet runtime. Original structures remain one PDB per ZIP member.
+        assets["structures_zip_b64"] = _structures_zip_b64(fam, struct)
+        blast_pairs = None
+        if classification_all is not None and {"q", "t"}.issubset(classification_all.columns):
+            member_set = set(members)
+            blast_pairs = classification_all[
+                classification_all.q.astype(str).isin(member_set) &
+                classification_all.t.astype(str).isin(member_set)
+            ].copy()
+        assets["xlsx_b64"] = _xlsx_b64(
+            fam=fam, members=members, tm=tm, usm=usm, idm=idm, blast_pairs=blast_pairs,
+            sig=sig, exp=exp, pocket_entry=pk,
+            pocket_raw=_pocket_raw_tables(results_dir, fam, pk), trees=trees, fit_stats=fit_stats)
         # ESM-tolerance-colored ref PDB: the renderer's "ESM" structure mode reads
         # REFPDB["<fam>_esm"]; without it, clicking the ESM button feeds addModel(undefined)
         # and blanks the viewer. Build it from the ESM ref's embedded structure + per-site
@@ -529,7 +865,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 s = _seq_from_pdb(struct[a])
             if s:
                 seq[a] = s
-        PAY[fam] = dict(members=members, order=members, struct=struct, seq=seq, assets=assets,
+        PAY[fam] = dict(members=members, order=members, struct=struct, transforms=transforms,
+                        seq=seq, assets=assets,
                         newick=newick, maxid=float(r.get("max_identity", 0) or 0))
         # ANN — populate every key the v19 renderer reads (label, pct_domain, pct_eff,
         # pct_novel, top_pfam/top_pfam_frac, top_pdb/top_pdb_frac, n_multi, fusion, members)

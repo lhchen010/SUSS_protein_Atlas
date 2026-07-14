@@ -81,10 +81,19 @@ for ff in sorted(glob.glob(os.path.join(famdir, "*.members.txt"))):
         pp = pd.read_csv(pcsv[0]); pp.columns = [c.strip() for c in pp.columns]
         entry["p2rank_status"] = "complete"
         if len(pp):
-            top = pp.iloc[0]; rid = str(top.get("residue_ids", ""))
-            resis = sorted({int(x.split("_")[-1]) for x in rid.split() if x.split("_")[-1].isdigit()})
-            entry["p2rank"] = {"top_score": float(top.get("score", 0)), "n_pockets": len(pp),
-                               "lining_residues": resis}
+            all_pockets = []
+            for idx, pred in pp.iterrows():
+                rid = str(pred.get("residue_ids", ""))
+                resis = sorted({int(x.split("_")[-1]) for x in rid.split()
+                                if x.split("_")[-1].isdigit()})
+                all_pockets.append({
+                    "pocket_id": int(pred.get("rank", idx + 1)),
+                    "score": float(pred.get("score", 0)),
+                    "lining_residues": resis,
+                })
+            top = max(all_pockets, key=lambda p: p["score"])
+            entry["p2rank"] = {"top_score": top["score"], "n_pockets": len(all_pockets),
+                               "lining_residues": top["lining_residues"], "pockets": all_pockets}
     # fpocket (local only)
     if FPOCKET:
         fwd = os.path.join(os.path.dirname(out_sasa), "fpocket", fam); os.makedirs(fwd, exist_ok=True)
@@ -97,15 +106,20 @@ for ff in sorted(glob.glob(os.path.join(famdir, "*.members.txt"))):
             sc = {int(n): float(s) for n, s in blk}
             if sc:
                 topn = max(sc, key=sc.get)
-                atm = os.path.join(fwd, f"{ref}_out", "pockets", f"pocket{topn}_atm.pdb")
-                resis = set()
-                if os.path.exists(atm):
-                    for line in open(atm):
-                        if line.startswith(("ATOM", "HETATM")):
-                            try: resis.add(int(line[22:26]))
-                            except: pass
+                all_pockets = []
+                for pocket_id, score in sorted(sc.items()):
+                    atm = os.path.join(fwd, f"{ref}_out", "pockets", f"pocket{pocket_id}_atm.pdb")
+                    resis = set()
+                    if os.path.exists(atm):
+                        for line in open(atm):
+                            if line.startswith(("ATOM", "HETATM")):
+                                try: resis.add(int(line[22:26]))
+                                except (ValueError, IndexError): pass
+                    all_pockets.append({"pocket_id": pocket_id, "score": round(score, 3),
+                                        "lining_residues": sorted(resis)})
+                top = next(p for p in all_pockets if p["pocket_id"] == topn)
                 entry["fpocket"] = {"top_score": round(sc[topn], 3), "n_pockets": len(sc),
-                                    "lining_residues": sorted(resis)}
+                                    "lining_residues": top["lining_residues"], "pockets": all_pockets}
         entry["fpocket_status"] = "complete"
     pockets[fam] = entry
 json.dump(pockets, open(out_pock, "w"))
