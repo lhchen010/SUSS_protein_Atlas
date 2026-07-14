@@ -74,6 +74,20 @@ def test_family_workbook_contains_complete_evidence_sheets():
     encoded = html_builder._xlsx_b64(
         fam="F0",
         members=["A1", "A2"],
+        annotation=pd.DataFrame([
+            {"acc": "A1", "family": "F0", "annotation_status": "complete",
+             "interpro_status": "complete", "foldseek_pdb_status": "complete",
+             "foldseek_afdb_status": "complete", "effectorp_status": "complete",
+             "deeptmhmm_status": "complete",
+             "pfam_domains": "PF00001", "pdb_hit": "1ABC", "afdbsp_name": "Protein alpha",
+             "effectorp": "effector", "n_TMR": 0, "novel": False},
+            {"acc": "A2", "family": "F0", "annotation_status": "partial",
+             "interpro_status": "complete", "foldseek_pdb_status": "complete",
+             "foldseek_afdb_status": "complete", "effectorp_status": "complete",
+             "deeptmhmm_status": "failed",
+             "pfam_domains": "", "pdb_hit": "", "afdbsp_name": "",
+             "effectorp": "non-effector", "n_TMR": 1, "novel": False},
+        ]),
         tm=matrix,
         usm=matrix,
         idm=matrix,
@@ -99,13 +113,19 @@ def test_family_workbook_contains_complete_evidence_sheets():
 
     workbook = pd.ExcelFile(io.BytesIO(base64.b64decode(encoded)))
     assert {
-        "README", "members", "foldseek_TM", "usalign_TM", "blast_identity", "blast_pairs",
+        "README", "members", "annotation", "foldseek_TM", "usalign_TM", "blast_identity", "blast_pairs",
         "pocket_summary", "pocket_predictions", "pocket_residues", "fpocket_pockets",
         "p2rank_pockets", "foldtree", "RNAseq", "per_site",
         "superposition",
     }.issubset(workbook.sheet_names)
     pockets = workbook.parse("pocket_predictions")
     assert set(pockets["method"]) == {"fpocket", "p2rank"}
+    annotation = workbook.parse("annotation")
+    assert list(annotation["acc"]) == ["A1", "A2"]
+    assert {"annotation_status", "pfam_domains", "pdb_hit", "afdbsp_name",
+            "effectorp", "n_TMR", "novel", "interpro_status", "foldseek_pdb_status",
+            "foldseek_afdb_status", "effectorp_status", "deeptmhmm_status"}.issubset(
+                annotation.columns)
 
 
 def test_old_pocket_results_are_enriched_from_raw_outputs():

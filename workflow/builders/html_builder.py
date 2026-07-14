@@ -500,14 +500,16 @@ def _newick_to_svg(nwk, hub=None):
     return "".join(P)
 
 
-def _xlsx_b64(fam, members, tm, usm, idm, blast_pairs, sig, exp, pocket_entry,
-              pocket_raw, trees, fit_stats):
+def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
+              pocket_entry, pocket_raw, trees, fit_stats):
     """Build the complete, auditable per-family analysis workbook."""
     try:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xl:
             pd.DataFrame({"family": [fam] * len(members), "member": members}).to_excel(
                 xl, sheet_name="members", index=False)
+            (annotation if annotation is not None else pd.DataFrame()).to_excel(
+                xl, sheet_name="annotation", index=False)
             if tm is not None:
                 tm.to_excel(xl, sheet_name="foldseek_TM", index=False)
             if usm is not None:
@@ -565,6 +567,7 @@ def _xlsx_b64(fam, members, tm, usm, idm, blast_pairs, sig, exp, pocket_entry,
             pd.DataFrame(fit_rows).to_excel(
                 xl, sheet_name="superposition", index=False)
             pd.DataFrame([
+                ("annotation", "Complete per-member annotation and component statuses from member_annotation.csv."),
                 ("foldseek_TM", "Within-family symmetric Foldseek TM-score matrix used for structural clustering."),
                 ("usalign_TM", "Independent within-family US-align TM-score matrix."),
                 ("blast_identity", "Best-HSP BLASTp identity matrix."),
@@ -834,8 +837,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 classification_all.t.astype(str).isin(member_set)
             ].copy()
         assets["xlsx_b64"] = _xlsx_b64(
-            fam=fam, members=members, tm=tm, usm=usm, idm=idm, blast_pairs=blast_pairs,
-            sig=sig, exp=exp, pocket_entry=pk,
+            fam=fam, members=members,
+            annotation=(anno[anno["family"].astype(str) == str(fam)].copy()
+                        if len(anno) and "family" in anno.columns else None),
+            tm=tm, usm=usm, idm=idm, blast_pairs=blast_pairs, sig=sig, exp=exp, pocket_entry=pk,
             pocket_raw=_pocket_raw_tables(results_dir, fam, pk), trees=trees, fit_stats=fit_stats)
         # ESM-tolerance-colored ref PDB: the renderer's "ESM" structure mode reads
         # REFPDB["<fam>_esm"]; without it, clicking the ESM button feeds addModel(undefined)
