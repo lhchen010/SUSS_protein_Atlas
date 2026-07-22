@@ -164,3 +164,21 @@ def test_renderer_uses_aligned_payload_and_zip_download():
     assert "structures_zip_b64" in renderer
     assert "All structures (ZIP)" in renderer
     assert "All structures (multi-PDB)" not in renderer
+
+
+def test_network_search_supports_annotation_fields_and_highlighting():
+    prefix = (ROOT / "workflow" / "builders" / "template" / "prefix.html").read_text()
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+
+    assert 'id="searchinput"' in prefix
+    assert 'id="searchstatus"' in prefix
+    assert 'id="clearsearch"' in prefix
+    assert "function familyMatches" in renderer
+    assert "function applyNetworkSearch" in renderer
+    assert 'field==="gene"' in renderer
+    assert 'field==="annotation"' in renderer
+    assert 'field==="effector"' in renderer
+    assert 'field==="tmr"' in renderer
+    assert 'field==="structtm"' in renderer
+    assert "networkNodes.update" in renderer
+    assert "network.focus" in renderer
