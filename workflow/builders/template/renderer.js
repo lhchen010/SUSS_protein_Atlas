@@ -5,10 +5,46 @@ function fnum(x,d){return(x==null||isNaN(x))?"\u2013":Number(x).toFixed(d==null?
 function nodeData(id){return NET.nodes.find(function(n){return n.id===id;});}
 var nodes=NET.nodes.map(function(d){var an=ANN[d.id];var lab=d.id+(an?("\n"+shortLab(an.label)):"");return{id:d.id,label:lab,value:d.n,color:{background:sussColor(d.suss),border:"#555"},title:d.id+": "+d.n+" members, "+d.suss+"% core SUSS"+(an?(" | "+an.label+" ("+an.pct_domain+"% w/domain, "+an.pct_eff+"% effector)"):"")};});
 function shortLab(l){if(!l)return"";var t=l.trim();var map=[[/Auxiliary Activity family 9/i,"AA9/GH61"],[/Glycosyl hydrolases? family 16/i,"GH16"],[/Glycosyl hydrolase family 10/i,"GH10"],[/Glycoside hydrolase 131/i,"GH131"],[/Pectate lyase/i,"Pectate lyase"],[/Cutinase/i,"Cutinase"],[/LysM/i,"LysM"],[/CFEM/i,"CFEM"],[/CVNH/i,"CVNH"],[/GDSL-?like Lipase/i,"GDSL lipase"],[/Hydrophobic surface binding/i,"HsbA"],[/Metallopeptidase/i,"Metallopeptidase"],[/Alternaria alternata allerg/i,"Alt a1 allergen"],[/Domain of unknown function/i,"DUF"],[/Kre9\/KNH/i,"Kre9/KNH"],[/carbonic anh/i,"Carbonic anhydr."],[/Necrosis inducing/i,"NLP/necrosis"],[/Deuterolysin/i,"Deuterolysin"],[/Pregnancy-associated plasma/i,"PAPP/metallopept."],[/Metallo-beta-lactamase/i,"Metallo-\u03b2-lact."],[/novel fold/i,"novel"],[/mixed/i,"mixed"]];for(var k=0;k<map.length;k++){if(map[k][0].test(t))return map[k][1];}t=t.replace(/ domain.*/i,"").replace(/,.*/,"").replace(/family/i,"fam").trim();return t.length>16?t.slice(0,15)+"\u2026":t;}
-var edges=NET.edges.map(function(e){return{from:e.from,to:e.to,value:e.tm,title:"mean structural TM "+e.tm.toFixed(2)+" ("+e.n+" cross-family pairs)",color:{color:"#ccc"}};});
-var network=new vis.Network(document.getElementById("net"),{nodes:new vis.DataSet(nodes),edges:new vis.DataSet(edges)},
+var edges=NET.edges.map(function(e,i){return{id:"edge-"+i,from:e.from,to:e.to,value:e.tm,title:"mean structural TM "+e.tm.toFixed(2)+" ("+e.n+" cross-family pairs)",color:{color:"#ccc"}};});
+var nodeColors={};nodes.forEach(function(n){nodeColors[n.id]=n.color.background;});
+var networkNodes=new vis.DataSet(nodes),networkEdges=new vis.DataSet(edges);
+var network=new vis.Network(document.getElementById("net"),{nodes:networkNodes,edges:networkEdges},
  {nodes:{shape:"dot",scaling:{min:8,max:40,label:{min:11,max:22}},font:{size:14}},edges:{smooth:false,scaling:{min:1,max:6}},
   physics:{barnesHut:{gravitationalConstant:-3200,springLength:130},stabilization:{iterations:220}},interaction:{hover:true}});
+var searchMatches=NET.nodes.map(function(n){return n.id;});
+function searchNorm(v){return v==null?"":String(v).toLowerCase().trim();}
+function memberValues(m){return[m.acc,m.gene,m.eff,m.pfam,m.ipr,m.pdb,m.afdb,m.afdb_hit,m.tm+" tmr",m.tm+" tm",m.novel?"novel":"known"];}
+function annotationValues(an){return[an.label,an.top_pfam,an.top_pdb,an.top_ipr].concat((an.members||[]).reduce(function(a,m){return a.concat(memberValues(m));},[]));}
+function fieldMatch(id,field,value){
+ var an=ANN[id]||{},d=nodeData(id)||{},mem=an.members||[],v=searchNorm(value);
+ function any(vals){return vals.some(function(x){return searchNorm(x).indexOf(v)>=0;});}
+ if(field==="family"||field==="cluster")return searchNorm(id).indexOf(v)>=0;
+ if(field==="gene"||field==="acc"||field==="accession")return mem.some(function(m){return any([m.acc,m.gene]);});
+ if(field==="annotation"||field==="anno"||field==="domain"||field==="pfam"||field==="interpro"||field==="pdb"||field==="afdb")return any(annotationValues(an));
+ if(field==="effector"||field==="effectorp")return mem.some(function(m){var e=searchNorm(m.eff);if(v==="effector")return e.indexOf("effector")>=0&&e.indexOf("non")<0;if(v==="non-effector"||v==="noneffector")return e.indexOf("non")>=0&&e.indexOf("effector")>=0;return e.indexOf(v)>=0;});
+ if(field==="tmr"||field==="deeptmhmm")return mem.some(function(m){return searchNorm(m.tm)===v||searchNorm(m.tm+" tmr").indexOf(v)>=0;});
+ if(field==="tm")return fieldMatch(id,"tmr",v)||searchNorm(d.tm)===v;
+ if(field==="structtm"||field==="structural-tm")return searchNorm(d.tm).indexOf(v)>=0;
+ if(field==="novel")return mem.some(function(m){return searchNorm(m.novel).indexOf(v)>=0||(v==="novel"&&m.novel);});
+ if(field==="suss")return searchNorm(d.suss).indexOf(v)>=0;
+ var all=[id,d.n,d.tm,d.id_pct,d.suss,d.plddt,d.len,d.maxid,"structural tm "+d.tm,"suss "+d.suss].concat(annotationValues(an));
+ if(v==="effector"||v==="non-effector"||v==="noneffector")return fieldMatch(id,"effectorp",v);
+ return any(all);
+}
+function familyMatches(id,query){var terms=searchNorm(query).split(/\s+/).filter(Boolean);return terms.every(function(term){var p=term.indexOf(":");return p>0?fieldMatch(id,term.slice(0,p),term.slice(p+1)):fieldMatch(id,"all",term);});}
+function applyNetworkSearch(query){
+ var q=searchNorm(query),ids=NET.nodes.map(function(n){return n.id;});searchMatches=q?ids.filter(function(id){return familyMatches(id,q);}):ids;
+ var matched={};searchMatches.forEach(function(id){matched[id]=true;});
+ networkNodes.update(ids.map(function(id){var hit=!!matched[id]||!q;return{id:id,color:{background:hit?nodeColors[id]:"#e4e9ec",border:hit&&q?"#e67e22":(hit?"#555":"#c7d0d5")},borderWidth:hit&&q?4:1,shadow:hit&&q?{enabled:true,color:"rgba(230,126,34,0.35)",size:12,x:0,y:0}:false,font:{color:hit?"#222":"#a0a9ae"}};}));
+ networkEdges.update(edges.map(function(e){var active=!q||(matched[e.from]&&matched[e.to]);return{id:e.id,color:{color:active?"#ccc":"#e7ebed",opacity:active?1:0.25}};}));
+ var st=document.getElementById("searchstatus");if(st)st.textContent=q?(searchMatches.length+" cluster"+(searchMatches.length===1?"":"s")):"";
+ var clear=document.getElementById("clearsearch");if(clear)clear.style.visibility=q?"visible":"hidden";
+ return searchMatches;
+}
+function clearNetworkSearch(){var input=document.getElementById("searchinput");if(input){input.value="";input.focus();}applyNetworkSearch("");}
+var searchInput=document.getElementById("searchinput"),searchTimer=null;
+if(searchInput){searchInput.addEventListener("input",function(){var q=this.value;clearTimeout(searchTimer);searchTimer=setTimeout(function(){applyNetworkSearch(q);},80);});searchInput.addEventListener("keydown",function(e){if(e.key==="Escape"){clearNetworkSearch();e.preventDefault();}else if(e.key==="Enter"){var found=applyNetworkSearch(this.value);if(found.length===1){network.selectNodes(found);network.focus(found[0],{scale:1.15,animation:true});showFamily(found[0]);}else if(found.length>1){network.fit({nodes:found,animation:true});}e.preventDefault();}});}
+var clearSearchButton=document.getElementById("clearsearch");if(clearSearchButton)clearSearchButton.addEventListener("click",clearNetworkSearch);applyNetworkSearch("");
 var curFam=null,glviewer=null,structMode="cons",repMode="cartoon",selMembers={},curTree=null,pockMethod="fpocket";
 
 // ---------- Newick parser ----------

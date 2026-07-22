@@ -134,6 +134,25 @@ for workflow development:
 | `results/families/<family>/` | Downloadable family workbook with per-member annotation, Foldseek and US-align matrices, BLAST similarity, complete pocket outputs, FoldTree trees, conservation, structures, and RNA-seq |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
 
+## Interactive network search
+
+The atlas network toolbar searches every clustered family without a server round trip. Plain text
+matches family IDs, member accessions, annotation names, InterPro/Pfam terms, structural hits,
+EffectorP calls, transmembrane predictions, novelty calls, and family metrics. Field prefixes are
+available for precise queries:
+
+| Prefix | Example |
+|---|---|
+| `gene:` / `acc:` | `gene:TDZ13877.1` |
+| `annotation:` | `annotation:Peroxidase` |
+| `effectorp:` | `effectorp:non-effector` |
+| `tmr:` / `deeptmhmm:` | `tmr:1` |
+| `structtm:` | `structtm:0.65` |
+| `family:` / `novel:` / `suss:` | `family:F2` |
+
+Matching clusters retain their scientific color and receive an orange outline; non-matches are
+visually muted. Press Enter to open a unique result or fit multiple matches, and Escape to reset.
+
 ## Quickstart
 
 ### 1. Create the environment

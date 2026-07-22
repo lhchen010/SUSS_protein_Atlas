@@ -905,13 +905,17 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 for _, mr in g.iterrows():
                     mem_objs.append(dict(
                         acc=str(mr.acc),
+                        gene=_cell(mr.gene_name) if "gene_name" in g else
+                             (_cell(mr.protein_name) if "protein_name" in g else ""),
                         novel=bool(mr.novel) if "novel" in g else False,
                         tm=int(mr.n_TMR) if "n_TMR" in g and pd.notna(mr.n_TMR) else 0,
                         eff=_cell(mr.effectorp) if "effectorp" in g else "",
                         pfam=_cell(mr.pfam_domains) if "pfam_domains" in g else "",
+                        ipr=_cell(mr.interpro_entries) if "interpro_entries" in g else "",
                         pdb=_cell(mr.pdb_hit) if "pdb_hit" in g else "",
                         afdb=_cell(mr.afdbsp_name) if "afdbsp_name" in g else
-                             (_cell(mr.afdbsp_hit) if "afdbsp_hit" in g else "")))
+                             (_cell(mr.afdbsp_hit) if "afdbsp_hit" in g else ""),
+                        afdb_hit=_cell(mr.afdbsp_hit) if "afdbsp_hit" in g else ""))
                 ANN[fam] = dict(label=label, n=int(n),
                                 pct_novel=round(100 * g.novel.mean(), 1) if "novel" in g else 0,
                                 pct_eff=round(100 * g.is_effector.mean(), 1) if "is_effector" in g else 0,
