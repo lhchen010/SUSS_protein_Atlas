@@ -35,10 +35,12 @@ and the AFDB accession. Existing payload fields and workbook exports are unchang
 At widths below 700 px, the network and family panel are stacked vertically. This removes the old
 520 px horizontal overflow while preserving the network as the first interactive view.
 
-## Staging validation
+## Production validation
 
-The builder regenerated the six-family, 100-protein production dataset from job
-`20260714-100412-cor-436dde93`. Browser acceptance results:
+The deployed portal completed fresh job `20260722-111059-cor-35e61035` with engine version `1.1.0`
+and tested code commit `ce919d0a787b589eefc1111b7c74f26539190b61`. The run accepted 100 structures,
+100 sequences, and RNA-seq data, completed six families, and produced the searchable atlas without
+console errors. Browser acceptance results:
 
 | Query | Expected result | Observed result |
 |---|---|---|
@@ -49,6 +51,9 @@ The builder regenerated the six-family, 100-protein production dataset from job
 
 Desktop highlighting was visually inspected. A 390 x 844 px browser check reported a 390 px body,
 390 px network, no horizontal overflow, and the correct two-cluster TMR result.
+
+- Production portal: `http://100.80.77.29:8600`
+- Acceptance atlas: `http://100.80.77.29:8600/atlas?id=20260722-111059-cor-35e61035`
 
 ## Automated validation
 
