@@ -135,7 +135,7 @@ rule seqs:
     script: "scripts/build_seqs.py"
 
 rule esm:
-    input:  seqs=f"{RESULTS}/seqs.fasta"
+    input:  seqs=f"{RESULTS}/seqs.fasta", members=f"{RESULTS}/members.csv"
     output: f"{RESULTS}/esm_all.csv"
     params: enabled=on("esm"), script=TOOLS.get("esm_scan", ""), model=config["signals"]["esm_model"],
             strategy=config["signals"]["plm_strategy"],

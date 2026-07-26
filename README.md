@@ -10,7 +10,9 @@ structurally similar protein families in secreted effector repertoires.**
 SUSS Protein Atlas starts from predicted protein structures for one strain, builds
 structure-defined families, labels their sequence-divergence spectrum, and integrates independent
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
-optional expression into a self-contained interactive atlas.
+optional expression into a self-contained interactive atlas. Version 2 separates true structural
+families from unclustered singleton proteins: families remain in the network, while singletons
+receive a searchable evidence table and dedicated single-protein viewer.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -24,7 +26,8 @@ optional expression into a self-contained interactive atlas.
 | What defines a SUSS relationship? | Structural similarity with no BLAST-detected relationship at the configured threshold |
 | How is structure independently checked? | Within-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | What biological evidence is integrated? | Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, InterProScan, EffectorP, DeepTMHMM, and optional RNA-seq |
-| What is delivered? | Offline interactive HTML, Excel summaries, machine-readable tables, per-family assets, and run provenance |
+| How are singletons handled? | As independent proteins with structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
+| What is delivered? | Offline interactive HTML with family and singleton workspaces, Excel summaries, machine-readable tables, per-protein assets, and run provenance |
 | How is it orchestrated? | Snakemake checkpoint expansion after the family count becomes known |
 
 ## Workflow
@@ -48,26 +51,43 @@ flowchart TB
         LEIDEN["Leiden communities<br/>families and singletons"]
     end
 
-    subgraph EVIDENCE["3. Sequence and family-level evidence"]
+    subgraph SPLIT["3. Analysis scope"]
         direction LR
-        SEQUENCE["Sequence divergence<br/>BLAST labels"]
-        STRUCTURE["Structural cross-check<br/>US-align TM matrix"]
-        RESIDUE["Residue-level evidence<br/>conservation, pockets, ESM"]
-        FUNCTION["Functional annotation<br/>domains, folds, effectors, TMRs"]
-        PHYLOGENY["Structural phylogeny<br/>FoldTree"]
-        EXPRESSION["Optional expression<br/>RNA-seq"]
+        FAMILIES["Structural families<br/>2 or more members"]
+        SINGLETONS["Singleton proteins<br/>independent records"]
     end
 
-    subgraph INTEGRATION["4. Integration and quality states"]
+    subgraph FAMILY_EVIDENCE["4A. Family evidence"]
         direction LR
-        FAMILY["Family metrics + member evidence + cross-checks"]
-        STATUS["Typed state<br/>complete / partial / not_run / failed"]
-        FAMILY --> STATUS
+        SEQUENCE["BLAST divergence labels"]
+        STRUCTURE["Foldseek + US-align matrices"]
+        CONSERVATION["FoldMason + Rate4Site"]
+        PHYLOGENY["FoldTree phylogeny"]
+        FAMILY_SHARED["Pockets, ESM, annotation,<br/>EffectorP, DeepTMHMM, RNA-seq"]
     end
 
-    subgraph OUTPUTS["5. Research outputs"]
+    subgraph SINGLETON_EVIDENCE["4B. Singleton evidence"]
         direction LR
-        ATLAS["Self-contained interactive HTML atlas"]
+        SINGLE_STRUCT["AlphaFold structure + pLDDT"]
+        SINGLE_POCKET["fpocket + P2Rank"]
+        SINGLE_ANNO["InterPro + EffectorP + DeepTMHMM"]
+        SINGLE_FOLDSEEK["Foldseek PDB100 + AFDB/Swiss-Prot"]
+        SINGLE_EXPR["ESM + optional RNA-seq"]
+    end
+
+    subgraph INTEGRATION["5. Typed integration"]
+        direction LR
+        FAMILY_RECORD["Family records<br/>comparative evidence"]
+        SINGLE_RECORD["Singleton records<br/>direct evidence only"]
+        STATUS["complete / partial / not_run / failed"]
+        FAMILY_RECORD --> STATUS
+        SINGLE_RECORD --> STATUS
+    end
+
+    subgraph OUTPUTS["6. Research outputs"]
+        direction LR
+        NETWORK["Family network"]
+        WORKBENCH["Searchable singleton workbench"]
         EXCEL["Family summary and composition workbooks"]
         TABLES["CSV, JSON, matrices, trees, PDB, and FASTA"]
         PROV["Effective config, hashes, tools,<br/>engine version, and Git commit"]
@@ -78,38 +98,55 @@ flowchart TB
     RNA --> VALIDATE
     CFG --> VALIDATE
     VALIDATE --> QC --> FOLDSEEK --> GRAPH --> LEIDEN
-    LEIDEN --> SEQUENCE
-    LEIDEN --> STRUCTURE
-    LEIDEN --> RESIDUE
-    LEIDEN --> FUNCTION
-    LEIDEN --> PHYLOGENY
-    LEIDEN --> EXPRESSION
-    SEQUENCE --> FAMILY
-    STRUCTURE --> FAMILY
-    RESIDUE --> FAMILY
-    FUNCTION --> FAMILY
-    PHYLOGENY --> FAMILY
-    EXPRESSION --> FAMILY
-    STATUS --> ATLAS
+    LEIDEN --> FAMILIES
+    LEIDEN --> SINGLETONS
+    FAMILIES --> SEQUENCE
+    FAMILIES --> STRUCTURE
+    FAMILIES --> CONSERVATION
+    FAMILIES --> PHYLOGENY
+    FAMILIES --> FAMILY_SHARED
+    SINGLETONS --> SINGLE_STRUCT
+    SINGLETONS --> SINGLE_POCKET
+    SINGLETONS --> SINGLE_ANNO
+    SINGLETONS --> SINGLE_FOLDSEEK
+    SINGLETONS --> SINGLE_EXPR
+    SEQUENCE --> FAMILY_RECORD
+    STRUCTURE --> FAMILY_RECORD
+    CONSERVATION --> FAMILY_RECORD
+    PHYLOGENY --> FAMILY_RECORD
+    FAMILY_SHARED --> FAMILY_RECORD
+    SINGLE_STRUCT --> SINGLE_RECORD
+    SINGLE_POCKET --> SINGLE_RECORD
+    SINGLE_ANNO --> SINGLE_RECORD
+    SINGLE_FOLDSEEK --> SINGLE_RECORD
+    SINGLE_EXPR --> SINGLE_RECORD
+    STATUS --> NETWORK
+    STATUS --> WORKBENCH
     STATUS --> EXCEL
     STATUS --> TABLES
     STATUS --> PROV
 
     classDef input fill:#e8f1fb,stroke:#3974a8,color:#17212b,stroke-width:1.5px;
     classDef core fill:#e8f5ec,stroke:#348357,color:#17212b,stroke-width:1.5px;
-    classDef evidence fill:#fff4d8,stroke:#a97816,color:#17212b,stroke-width:1.5px;
+    classDef split fill:#f0f2f4,stroke:#667985,color:#17212b,stroke-width:1.5px;
+    classDef family fill:#fff4d8,stroke:#a97816,color:#17212b,stroke-width:1.5px;
+    classDef singleton fill:#e8f5f2,stroke:#267a6a,color:#17212b,stroke-width:1.5px;
     classDef integration fill:#f7e9ee,stroke:#a34d68,color:#17212b,stroke-width:1.5px;
     classDef output fill:#eeeafa,stroke:#6a57a5,color:#17212b,stroke-width:1.5px;
     style INPUTS fill:#f4f8fc,stroke:#8aabc8,stroke-width:1px;
     style CORE fill:#f2f9f4,stroke:#86b398,stroke-width:1px;
-    style EVIDENCE fill:#fffbef,stroke:#c7aa63,stroke-width:1px;
+    style SPLIT fill:#f7f8f9,stroke:#a7b1b7,stroke-width:1px;
+    style FAMILY_EVIDENCE fill:#fffbef,stroke:#c7aa63,stroke-width:1px;
+    style SINGLETON_EVIDENCE fill:#f1faf8,stroke:#7ab1a6,stroke-width:1px;
     style INTEGRATION fill:#fcf4f7,stroke:#bd8295,stroke-width:1px;
     style OUTPUTS fill:#f7f5fc,stroke:#9b90c3,stroke-width:1px;
     class PDB,FASTA,RNA,CFG input;
     class VALIDATE,QC,FOLDSEEK,GRAPH,LEIDEN core;
-    class SEQUENCE,STRUCTURE,RESIDUE,FUNCTION,PHYLOGENY,EXPRESSION evidence;
-    class STATUS,FAMILY integration;
-    class ATLAS,EXCEL,TABLES,PROV output;
+    class FAMILIES,SINGLETONS split;
+    class SEQUENCE,STRUCTURE,CONSERVATION,PHYLOGENY,FAMILY_SHARED family;
+    class SINGLE_STRUCT,SINGLE_POCKET,SINGLE_ANNO,SINGLE_FOLDSEEK,SINGLE_EXPR singleton;
+    class STATUS,FAMILY_RECORD,SINGLE_RECORD integration;
+    class NETWORK,WORKBENCH,EXCEL,TABLES,PROV output;
 ```
 
 The diagram above shows the scientific data flow. The exact rule-level graph remains available
@@ -126,20 +163,27 @@ for workflow development:
 
 | Output | Purpose |
 |---|---|
-| `results/<atlas_name>.html` | Self-contained interactive family network and integrated evidence cards |
+| `results/<atlas_name>.html` | Self-contained family network plus searchable singleton workbench and integrated evidence panels |
 | `results/family_summary.xlsx` | Clustered families and singletons with members, evidence, TM statistics, SUSS labels, pockets, and expression |
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/all_families_master.csv` | Machine-readable integrated family table |
 | `results/member_annotation.csv` | Per-protein annotation values and component execution states |
 | `results/families/<family>/` | Downloadable family workbook with per-member annotation, Foldseek and US-align matrices, BLAST similarity, complete pocket outputs, FoldTree trees and rooting status, conservation, structures, and RNA-seq |
+| Singleton Excel download | Direct annotation, Foldseek PDB100/AFDB hits and TM scores, pockets, and RNA-seq; family-only matrices, FoldTree, conservation, and superposition are intentionally absent |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
 
-## Interactive network search
+## Interactive atlas search
 
-The atlas network toolbar searches every clustered family without a server round trip. Plain text
-matches family IDs, member accessions, annotation names, InterPro/Pfam terms, structural hits,
-EffectorP calls, transmembrane predictions, novelty calls, and family metrics. Field prefixes are
-available for precise queries:
+The atlas has two primary views:
+
+- **Cluster network** searches and highlights structure-defined families.
+- **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
+  pockets, and transmembrane helices. Selecting a row opens structure, pocket, ESM, RNA-seq, and
+  direct annotation evidence for that protein.
+
+Both views search locally without a server round trip. Plain text matches accessions, annotations,
+InterPro/Pfam terms, Foldseek PDB100 and AFDB/Swiss-Prot hits, EffectorP calls, DeepTMHMM results,
+novelty, pockets, and expression. Field prefixes are available for precise queries:
 
 | Prefix | Example |
 |---|---|
@@ -147,6 +191,8 @@ available for precise queries:
 | `annotation:` | `annotation:Peroxidase` |
 | `effectorp:` | `effectorp:non-effector` |
 | `tmr:` / `deeptmhmm:` | `tmr:1` |
+| `pdb:` / `afdb:` / `foldseek:` | `afdb:hydrolase` |
+| `pocket:` / `rnaseq:` | `pocket:p2rank` |
 | `structtm:` | `structtm:0.65` |
 | `family:` / `novel:` / `suss:` | `family:F2` |
 
@@ -244,7 +290,7 @@ unless all required evidence is complete.
 | [config/README.md](config/README.md) | Configuration fields and step behavior |
 | [examples/EXPECTED.md](examples/EXPECTED.md) | Reproducible 100-protein acceptance baseline |
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
-| [docs/CLAUDE_FOR_SCIENCE_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_HANDOFF.md) | v1.0.1 validation, deployment evidence, known limitations, and rollback |
+| [docs/CLAUDE_FOR_SCIENCE_V2.0.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V2.0.0_HANDOFF.md) | v2 singleton workbench design, validation, deployment evidence, and Claude acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses

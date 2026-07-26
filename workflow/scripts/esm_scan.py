@@ -1,13 +1,14 @@
-"""esm rule — ESM-1b per-residue variant-effect (masked-marginals) for each family
-reference sequence. Runs esmscan.py on 4070 (boltzgen env, GPU); weights auto-download
-first run. Emits esm_all.csv = long-form (fam, resi, wt, per-AA LLR). (recovered from
-esm_driver.py.)
+"""ESM-1b per-residue variant effects for family references and singletons.
+
+Singleton records use their accession in the ``family`` column so the atlas can
+attach the result without pretending that all singletons form one family.
 """
 import os, glob, re, subprocess
 import pandas as pd
 from runtime_utils import resolve_executable, resolve_file
 
 seqs_fa = snakemake.input.seqs
+members_csv = snakemake.input.members
 out_csv = snakemake.output[0]
 esmpy   = snakemake.params.script
 model   = snakemake.params.model
@@ -35,11 +36,14 @@ for ff in sorted(glob.glob(os.path.join(resdir, "*.members.txt"))):
     fam = os.path.basename(ff).split(".")[0]
     m = accre.search(open(ff).readline())
     if m: refs[fam] = m.group(0)
+members = pd.read_csv(members_csv)
+for acc in sorted(members.loc[members.family == "singleton", "acc"].astype(str)):
+    refs[acc] = acc
 
 seq_by_acc = {acc_of(k): v for k, v in seqs.items()}
 outdir = os.path.join(os.path.dirname(out_csv), "esm_out"); os.makedirs(outdir, exist_ok=True)
 frames = []
-for fam, ref in sorted(refs.items(), key=lambda x: int(x[0][1:]) if x[0][1:].isdigit() else 0):
+for fam, ref in sorted(refs.items()):
     seq = seq_by_acc.get(ref)
     if not seq: continue
     pref = os.path.join(outdir, f"{fam}_{ref}")
@@ -60,4 +64,5 @@ if frames:
     pd.concat(frames, ignore_index=True).to_csv(out_csv, index=False)
 else:
     open(out_csv, "w").write("family,ref\n")
-print(f"ESM: {len(frames)} family references scored -> {out_csv}")
+n_singletons = int((members.family == "singleton").sum())
+print(f"ESM: {len(frames)} references ({n_singletons} singleton targets) -> {out_csv}")

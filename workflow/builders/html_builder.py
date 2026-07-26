@@ -1,27 +1,22 @@
-"""html_builder.build_atlas — interactive atlas HTML builder (ported from v19).
+"""Build the self-contained SUSS Atlas family and singleton workspaces.
 
-Ported from the validated co_suss_network.html v19 (artifact c1b281c8). The renderer
-(vis.js family network + draggable/hideable panels, embedded 3Dmol.js viewer with
-cartoon/surface/stick/sphere/line × B-factor coloring for conservation/ESM/pocket,
-FoldTree with hub gold-star, TM/ID/RNAseq matrices, Blob-based structure & Excel
-downloads) is stored verbatim as four constant template halves under template/:
+The renderer (vis.js family network, singleton evidence table, embedded 3Dmol.js viewer,
+matrices, trees, and Blob-based downloads) is stored as four template parts:
     prefix.html    head+body+CSS+vis setup, ends with 'var D='
-    databridge.js  ';var NET=D.NET,EXTRA=D.EXTRA,REFPDB=D.REFPDB,PAY=D.PAY;'
-    renderer.js    the ~21KB of pure renderer functions (constant)
+    databridge.js  maps the generated data payload to renderer variables
+    renderer.js    family and singleton interaction functions
     tail.html      '</script>' + closing tags
-build_atlas regenerates the DATA objects (D = {NET, EXTRA, REFPDB, PAY} and ANN) from
+build_atlas regenerates D = {NET, SINGLETONS, EXTRA, REFPDB, PAY, SUMMARY} and ANN from
 the engine's rule outputs, then assembles:  prefix + json(D) + databridge +
 'var ANN=' + json(ANN) + renderer + tail.
 
-Payload schema (v19 target on the left; what build_atlas populates noted inline).
 Fields are populated ONLY when the producing rule ran (step toggled on) and its output
-file exists; a family missing a given output simply omits those keys.
+file exists.
   NET.nodes[] = {id, n, tm, id_pct, suss, plddt, len, maxid}         # from master.csv
   NET.edges[] = {from, to, tm, tm_max, n}   # cross-family TM; only if cross_family_edges.csv exists
+  SINGLETONS[] = direct per-protein table records, keyed by accession
   PAY[fam]    = {members[], order[], struct{acc:pdbtext}, assets, newick, maxid}
-                struct: populated in single mode (embedded PDBs); empty in backend mode.
-                assets: tm_svg/id_svg (matrix rules), rna_svg (rnaseq), tree_svg (foldtree),
-                        xlsx_b64 (per-family workbook TM/seq-id/per-site/RNAseq — always built).
+  PAY[acc]    = singleton structure, sequence, RNA-seq image, and direct-evidence workbook
   EXTRA[fam]  = cons_min/cons_max/cons_sasa_r (conservation rule) · pocket_src/pocket_resi/
                 pocket_score/n_pocket + p2rank_resi/p2rank_score/p2rank_n/p2rank_prob +
                 fpocket_resi/fpocket_score (pocket rule, pockets.json; P2Rank preferred,
@@ -30,16 +25,10 @@ file exists; a family missing a given output simply omits those keys.
                 member, gold-starred on the FoldTree) · n_cys (CYS on ref) · ref_used.
                 A step toggled off (e.g. pocket:false) → those keys absent; the viewer's
                 gating (var pock=EXTRA[curFam]?EXTRA[curFam].pocket_resi:[]) handles it.
+  EXTRA[acc]  = singleton pockets, ESM tolerance, pLDDT range, cysteines, and expression
   REFPDB["<fam>_cons"] = conservation-B-factor ref PDB text (conservation rule)
   ANN[fam]    = {label, n, pct_novel, pct_eff, members[]}   # from member_annotation.csv
-
-Critical implementation notes (kept — hard-won this session):
-- String-splice assembly, NOT re.sub (backslashes un-escape JSON control chars).
-- Downloads via Blob+URL.createObjectURL (<a download href="data:"> blocked in artifact iframe).
-- Superposed structures embed backbone N/CA/C/O (not CA-only) so 3Dmol draws cartoon/stick/line.
-- pocket gating generalized: var pock=EXTRA[curFam]?EXTRA[curFam].pocket_resi:[]
-- single mode: structures embedded (foldcomp-compressible); backend mode: metadata only,
-  structures lazy-load from the 4070 portal.
+  ANN[acc]    = direct singleton annotation and component statuses
 """
 import os, io, json, glob, base64, math, re, zipfile
 import numpy as np, pandas as pd
@@ -60,6 +49,149 @@ def _seq_from_pdb(pdbtext):
             except ValueError: continue
             seq[resi] = _AA3TO1.get(ln[17:20].strip(), "X")
     return "".join(seq[k] for k in sorted(seq))
+
+
+def _bfactor_range(pdbtext):
+    """Return the finite B-factor range, used as the singleton pLDDT scale."""
+    values = []
+    for line in pdbtext.splitlines():
+        if line.startswith(("ATOM", "HETATM")) and len(line) >= 66:
+            try:
+                value = float(line[60:66])
+            except ValueError:
+                continue
+            if math.isfinite(value):
+                values.append(value)
+    return (min(values), max(values)) if values else (0.0, 100.0)
+
+
+def _pdb_with_bfactors(pdbtext, values, default=0.0):
+    """Return PDB text with residue-indexed values written to the B-factor column."""
+    output = []
+    for line in pdbtext.splitlines():
+        if line.startswith(("ATOM", "HETATM")) and len(line) >= 66:
+            try:
+                residue = int(line[22:26])
+            except ValueError:
+                output.append(line)
+                continue
+            output.append(f"{line[:60]}{float(values.get(residue, default)):6.2f}{line[66:]}")
+        else:
+            output.append(line)
+    return "\n".join(output)
+
+
+def _clean_cell(value):
+    text = "" if value is None else str(value)
+    return "" if text.lower() in {"nan", "<na>"} else text
+
+
+def _finite_float(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _annotation_payload(group):
+    """Build the renderer annotation object for a family or one singleton."""
+    if group is None or not len(group):
+        return None
+    n = len(group)
+
+    def top_value(column):
+        if column not in group:
+            return "—", 0.0
+        values = [
+            str(token)
+            for raw in group[column].dropna()
+            for token in re.split(r"\s*\|\s*", str(raw))
+            if token and token != "nan"
+        ]
+        values = [re.sub(r"\s*\(.*", "", value).strip() for value in values]
+        if not values:
+            return "—", 0.0
+        counts = pd.Series(values).value_counts()
+        return counts.index[0], round(100 * counts.iloc[0] / n, 1)
+
+    top_pfam, top_pfam_frac = top_value("pfam_domains")
+    top_pdb, top_pdb_frac = top_value("pdb_hit")
+    top_name, _ = top_value("afdbsp_name")
+    label = (
+        top_name
+        if top_name != "—"
+        else top_pfam
+        if top_pfam != "—"
+        else top_pdb
+        if top_pdb != "—"
+        else "novel/unknown"
+    )
+    members = []
+    for _, row in group.iterrows():
+        novel = None if "novel" not in group or pd.isna(row.novel) else bool(row.novel)
+        members.append({
+            "acc": str(row.acc),
+            "gene": (
+                _clean_cell(row.gene_name)
+                if "gene_name" in group
+                else _clean_cell(row.protein_name)
+                if "protein_name" in group
+                else ""
+            ),
+            "novel": novel,
+            "tm": int(row.n_TMR) if "n_TMR" in group and pd.notna(row.n_TMR) else 0,
+            "eff": _clean_cell(row.effectorp) if "effectorp" in group else "",
+            "pfam": _clean_cell(row.pfam_domains) if "pfam_domains" in group else "",
+            "ipr": _clean_cell(row.interpro_entries) if "interpro_entries" in group else "",
+            "pdb": _clean_cell(row.pdb_hit) if "pdb_hit" in group else "",
+            "pdb_tm": float(row.pdb_tm) if "pdb_tm" in group and pd.notna(row.pdb_tm) else None,
+            "afdb": (
+                _clean_cell(row.afdbsp_name)
+                if "afdbsp_name" in group
+                else _clean_cell(row.afdbsp_hit)
+                if "afdbsp_hit" in group
+                else ""
+            ),
+            "afdb_hit": _clean_cell(row.afdbsp_hit) if "afdbsp_hit" in group else "",
+            "afdb_tm": (
+                float(row.afdbsp_tm)
+                if "afdbsp_tm" in group and pd.notna(row.afdbsp_tm)
+                else None
+            ),
+            "annotation_status": (
+                _clean_cell(row.annotation_status) if "annotation_status" in group else ""
+            ),
+            "foldseek_pdb_status": (
+                _clean_cell(row.foldseek_pdb_status)
+                if "foldseek_pdb_status" in group
+                else ""
+            ),
+            "foldseek_afdb_status": (
+                _clean_cell(row.foldseek_afdb_status)
+                if "foldseek_afdb_status" in group
+                else ""
+            ),
+        })
+
+    known_novel = group.novel.dropna() if "novel" in group else pd.Series(dtype=float)
+    return {
+        "label": label,
+        "n": int(n),
+        "pct_novel": round(100 * known_novel.mean(), 1) if len(known_novel) else None,
+        "pct_eff": round(100 * group.is_effector.mean(), 1) if "is_effector" in group else None,
+        "pct_domain": round(
+            100 * group.has_any_domain.mean(), 1
+        ) if "has_any_domain" in group else None,
+        "top_pfam": top_pfam,
+        "top_pfam_frac": top_pfam_frac,
+        "top_pdb": top_pdb,
+        "top_pdb_frac": top_pdb_frac,
+        "top_ipr": top_value("interpro_entries")[0],
+        "n_multi": int(group.multi_domain.sum()) if "multi_domain" in group else 0,
+        "fusion": bool(group.multi_domain.sum()) if "multi_domain" in group else False,
+        "members": members,
+    }
 
 
 def _read_fasta_records(path):
@@ -501,7 +633,8 @@ def _newick_to_svg(nwk, hub=None):
 
 
 def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
-              pocket_entry, pocket_raw, trees, tree_status, fit_stats):
+              pocket_entry, pocket_raw, trees, tree_status, fit_stats,
+              analysis_kind="family"):
     """Build the complete, auditable per-family analysis workbook."""
     try:
         buf = io.BytesIO()
@@ -555,47 +688,53 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
             for sheet, table in (pocket_raw or {}).items():
                 table.to_excel(xl, sheet_name=sheet[:31], index=False)
 
-            metric_status = (tree_status or {}).get("metrics", {})
-            tree_rows = []
-            for metric, newick in trees.items():
-                status = metric_status.get(metric, {})
-                tree_rows.append({
-                    "metric": metric,
-                    "status": status.get("status", "status_unavailable"),
-                    "rooting_method": status.get("rooting_method"),
-                    "source_stage": status.get("source_stage"),
-                    "reason": status.get("reason"),
-                    "newick": newick,
-                })
-            pd.DataFrame(
-                tree_rows,
-                columns=["metric", "status", "rooting_method", "source_stage", "reason", "newick"],
-            ).to_excel(xl, sheet_name="foldtree", index=False)
-            fit_rows = []
-            for member, stats in fit_stats.items():
-                row = {"member": member, **stats}
-                for key in ("rotation", "translation"):
-                    if key in row:
-                        row[key] = json.dumps(row[key], separators=(",", ":"))
-                fit_rows.append(row)
-            pd.DataFrame(fit_rows).to_excel(
-                xl, sheet_name="superposition", index=False)
-            pd.DataFrame([
+            if analysis_kind == "family":
+                metric_status = (tree_status or {}).get("metrics", {})
+                tree_rows = []
+                for metric, newick in trees.items():
+                    status = metric_status.get(metric, {})
+                    tree_rows.append({
+                        "metric": metric,
+                        "status": status.get("status", "status_unavailable"),
+                        "rooting_method": status.get("rooting_method"),
+                        "source_stage": status.get("source_stage"),
+                        "reason": status.get("reason"),
+                        "newick": newick,
+                    })
+                pd.DataFrame(
+                    tree_rows,
+                    columns=["metric", "status", "rooting_method", "source_stage", "reason", "newick"],
+                ).to_excel(xl, sheet_name="foldtree", index=False)
+                fit_rows = []
+                for member, stats in fit_stats.items():
+                    row = {"member": member, **stats}
+                    for key in ("rotation", "translation"):
+                        if key in row:
+                            row[key] = json.dumps(row[key], separators=(",", ":"))
+                    fit_rows.append(row)
+                pd.DataFrame(fit_rows).to_excel(
+                    xl, sheet_name="superposition", index=False)
+            readme_rows = [
                 ("annotation", "Complete per-member annotation and component statuses from member_annotation.csv."),
-                ("foldseek_TM", "Within-family symmetric Foldseek TM-score matrix used for structural clustering."),
-                ("usalign_TM", "Independent within-family US-align TM-score matrix."),
-                ("blast_identity", "Best-HSP BLASTp identity matrix."),
-                ("blast_pairs", "Pair-level BLAST and SUSS classification data for structural edges."),
                 ("pocket_summary", "Detector status and top-pocket summary for fpocket and P2Rank."),
                 ("pocket_predictions", "Every pocket reported by each detector, including scores and lining residues."),
                 ("pocket_residues", "One row per detector, pocket, and lining residue."),
                 ("fpocket_pockets", "All descriptors parsed from the detector-native fpocket info file."),
                 ("p2rank_pockets", "Complete detector-native P2Rank predictions table with all original columns."),
-                ("foldtree", "FoldTree Newick trees with per-metric rooting method and recovery status."),
                 ("RNAseq", "Per-member, replicate-collapsed RNA-seq expression for this family."),
                 ("per_site", "Reference-residue conservation, SASA, pocket, and other site-level evidence."),
-                ("superposition", "Hub-referenced rigid-body fit method, paired CA count, and RMSD."),
-            ], columns=["sheet", "contents"]).to_excel(xl, sheet_name="README", index=False)
+            ]
+            if analysis_kind == "family":
+                readme_rows.extend([
+                    ("foldseek_TM", "Within-family symmetric Foldseek TM-score matrix used for structural clustering."),
+                    ("usalign_TM", "Independent within-family US-align TM-score matrix."),
+                    ("blast_identity", "Best-HSP BLASTp identity matrix."),
+                    ("blast_pairs", "Pair-level BLAST and SUSS classification data for structural edges."),
+                    ("foldtree", "FoldTree Newick trees with per-metric rooting method and recovery status."),
+                    ("superposition", "Hub-referenced rigid-body fit method, paired CA count, and RMSD."),
+                ])
+            pd.DataFrame(readme_rows, columns=["sheet", "contents"]).to_excel(
+                xl, sheet_name="README", index=False)
         return base64.b64encode(buf.getvalue()).decode()
     except Exception as exc:
         raise RuntimeError(f"{fam}: failed to build family workbook") from exc
@@ -624,6 +763,27 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
 
     def load_csv(p):
         return pd.read_csv(p) if os.path.exists(p) else None
+
+    members_all = load_csv(os.path.join(results_dir, "members.csv"))
+    expression_all = load_csv(os.path.join(results_dir, "rnaseq_expression.csv"))
+
+    def structure_text(accession, family_dir=None):
+        candidates = []
+        if family_dir:
+            candidates.append(os.path.join(family_dir, f"{accession}.pdb"))
+        input_dir = str(config.get("input", {}).get("pdb_dir", "") or "")
+        strain = str(config.get("strain", {}).get("code", "") or "")
+        if input_dir:
+            candidates.extend([
+                os.path.join(input_dir, f"{strain}_{accession}.pdb"),
+                os.path.join(input_dir, f"{accession}.pdb"),
+            ])
+        candidates.append(os.path.join(results_dir, "..", "input", "pdb",
+                                       f"{strain}_{accession}.pdb"))
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                return open(candidate, encoding="utf-8", errors="replace").read()
+        return ""
 
     # whole-set outputs loaded once (may be absent if that step was toggled off)
     pockets = {}
@@ -912,58 +1072,214 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         PAY[fam] = dict(members=members, order=members, struct=struct, transforms=transforms,
                         seq=seq, assets=assets,
                         newick=newick, maxid=float(r.get("max_identity", 0) or 0))
-        # ANN — populate every key the v19 renderer reads (label, pct_domain, pct_eff,
-        # pct_novel, top_pfam/top_pfam_frac, top_pdb/top_pdb_frac, n_multi, fusion, members)
         if len(anno):
-            g = anno[anno.family == fam]
-            if len(g):
-                n = len(g)
-                def _top(col):
-                    if col not in g: return "—", 0.0
-                    vals = [str(x) for s in g[col].dropna() for x in re.split(r"\s*\|\s*", str(s)) if x and x != "nan"]
-                    vals = [re.sub(r"\s*\(.*", "", v).strip() for v in vals]
-                    if not vals: return "—", 0.0
-                    vc = pd.Series(vals).value_counts()
-                    return vc.index[0], round(100 * vc.iloc[0] / n, 1)
-                top_pfam, top_pfam_frac = _top("pfam_domains")
-                top_pdb, top_pdb_frac = _top("pdb_hit")
-                top_name, top_name_frac = _top("afdbsp_name")   # real protein NAME (not accession)
-                pct_domain = round(100 * (g.has_any_domain.mean() if "has_any_domain" in g else 0), 1)
-                n_multi = int(g.multi_domain.sum()) if "multi_domain" in g else 0
-                # consensus label: real protein name > top Pfam > top PDB fold > novel
-                label = (top_name if top_name != "—" else
-                         top_pfam if top_pfam != "—" else
-                         top_pdb if top_pdb != "—" else "novel/unknown")
-                # per-member rows: the renderer's annHTML reads member OBJECTS with fields
-                # acc/novel/tm/eff/pfam/pdb/afdb — a bare accession string makes every cell
-                # undefined. Build the objects here.
-                def _cell(v):
-                    s = "" if v is None else str(v)
-                    return "" if s.lower() == "nan" else s
-                mem_objs = []
-                for _, mr in g.iterrows():
-                    mem_objs.append(dict(
-                        acc=str(mr.acc),
-                        gene=_cell(mr.gene_name) if "gene_name" in g else
-                             (_cell(mr.protein_name) if "protein_name" in g else ""),
-                        novel=bool(mr.novel) if "novel" in g else False,
-                        tm=int(mr.n_TMR) if "n_TMR" in g and pd.notna(mr.n_TMR) else 0,
-                        eff=_cell(mr.effectorp) if "effectorp" in g else "",
-                        pfam=_cell(mr.pfam_domains) if "pfam_domains" in g else "",
-                        ipr=_cell(mr.interpro_entries) if "interpro_entries" in g else "",
-                        pdb=_cell(mr.pdb_hit) if "pdb_hit" in g else "",
-                        afdb=_cell(mr.afdbsp_name) if "afdbsp_name" in g else
-                             (_cell(mr.afdbsp_hit) if "afdbsp_hit" in g else ""),
-                        afdb_hit=_cell(mr.afdbsp_hit) if "afdbsp_hit" in g else ""))
-                ANN[fam] = dict(label=label, n=int(n),
-                                pct_novel=round(100 * g.novel.mean(), 1) if "novel" in g else 0,
-                                pct_eff=round(100 * g.is_effector.mean(), 1) if "is_effector" in g else 0,
-                                pct_domain=pct_domain,
-                                top_pfam=top_pfam, top_pfam_frac=top_pfam_frac,
-                                top_pdb=top_pdb, top_pdb_frac=top_pdb_frac,
-                                top_ipr=_top("interpro_entries")[0],
-                                n_multi=n_multi, fusion=(n_multi > 0),
-                                members=mem_objs)
+            payload = _annotation_payload(anno[anno.family == fam])
+            if payload:
+                ANN[fam] = payload
+
+    # Singletons are independent proteins, not a synthetic cluster. They receive
+    # structure, pocket, ESM, RNA-seq, and database-annotation payloads, while all
+    # pairwise/family-only assets remain absent.
+    SINGLETONS = []
+    if members_all is not None and {"acc", "family"}.issubset(members_all.columns):
+        singleton_members = members_all[members_all.family == "singleton"].copy()
+        singleton_members = singleton_members.sort_values("acc")
+        for _, member_row in singleton_members.iterrows():
+            accession = str(member_row.acc)
+            annotation_row = (
+                anno[anno.acc.astype(str) == accession].copy()
+                if len(anno) and "acc" in anno.columns
+                else pd.DataFrame()
+            )
+            annotation_payload = _annotation_payload(annotation_row)
+            if annotation_payload:
+                ANN[accession] = annotation_payload
+                member_annotation = annotation_payload["members"][0]
+            else:
+                member_annotation = {
+                    "acc": accession, "gene": "", "novel": None, "tm": 0, "eff": "",
+                    "pfam": "", "ipr": "", "pdb": "", "pdb_tm": None, "afdb": "",
+                    "afdb_hit": "", "afdb_tm": None,
+                }
+
+            pdbtext = structure_text(accession)
+            structures = {accession: pdbtext} if mode == "single" and pdbtext else {}
+            sequence = seqs_all.get(accession) or (_seq_from_pdb(pdbtext) if pdbtext else "")
+            sequences = {accession: sequence} if sequence else {}
+            assets = {}
+
+            expression = None
+            expression_values = {}
+            if expression_all is not None and "acc" in expression_all.columns:
+                expression = expression_all[
+                    expression_all.acc.astype(str) == accession
+                ].copy()
+                if len(expression):
+                    numeric = expression.drop(columns=["acc"], errors="ignore").apply(
+                        pd.to_numeric, errors="coerce"
+                    )
+                    for column in numeric.columns:
+                        value = _finite_float(numeric.iloc[0][column])
+                        if value is not None:
+                            expression_values[str(column)] = value
+                    if expression_values:
+                        assets["rna_svg"] = _svg_datauri(
+                            _svg_heat(
+                                expression.set_index("acc"),
+                                f"{accession} · RNA-seq expression",
+                            )
+                        )
+
+            pocket_entry = _enrich_pocket_entry(
+                results_dir, accession, pockets.get(accession, {})
+            )
+            p2rank = pocket_entry.get("p2rank", {}) or {}
+            fpocket = pocket_entry.get("fpocket", {}) or {}
+            extra = {
+                "kind": "singleton",
+                "ref_used": accession,
+                "p2rank_resi": p2rank.get("lining_residues", []),
+                "p2rank_score": p2rank.get("top_score"),
+                "p2rank_n": p2rank.get("n_pockets"),
+                "p2rank_prob": p2rank.get("top_score"),
+                "fpocket_resi": fpocket.get("lining_residues", []),
+                "fpocket_score": fpocket.get("top_score"),
+                "pocket_resi": (
+                    p2rank.get("lining_residues", [])
+                    if p2rank
+                    else fpocket.get("lining_residues", [])
+                ),
+                "pocket_src": "p2rank" if p2rank else "fpocket" if fpocket else None,
+                "pocket_score": (
+                    p2rank.get("top_score")
+                    if p2rank
+                    else fpocket.get("top_score")
+                    if fpocket
+                    else None
+                ),
+                "n_pocket": (
+                    p2rank.get("n_pockets")
+                    if p2rank
+                    else fpocket.get("n_pockets")
+                    if fpocket
+                    else None
+                ),
+                "has_esm": False,
+                "n_cys": 0,
+                "expression": expression_values,
+            }
+            if pdbtext:
+                plddt_min, plddt_max = _bfactor_range(pdbtext)
+                extra.update(plddt_min=plddt_min, plddt_max=plddt_max)
+                cysteines = set()
+                for line in pdbtext.splitlines():
+                    if line.startswith("ATOM") and line[17:20].strip() == "CYS":
+                        try:
+                            cysteines.add(int(line[22:26]))
+                        except ValueError:
+                            pass
+                extra["n_cys"] = len(cysteines)
+
+            if esm_all is not None and "family" in esm_all.columns:
+                esm_rows = esm_all[esm_all.family.astype(str) == accession]
+                aa_columns = [
+                    column for column in esm_rows.columns
+                    if len(str(column)) == 1 and str(column).isalpha()
+                ]
+                if len(esm_rows) and aa_columns:
+                    mean_llr = esm_rows[aa_columns].mean(axis=1).to_numpy()
+                    position_column = next(
+                        (
+                            column for column in esm_rows.columns
+                            if str(column).lower() in ("", "unnamed: 0", "pos", "site")
+                        ),
+                        esm_rows.columns[0],
+                    )
+                    positions = pd.to_numeric(
+                        esm_rows[position_column].astype(str).str.extract(r"(\d+)$")[0],
+                        errors="coerce",
+                    )
+                    tolerance = {
+                        int(position): float(value)
+                        for position, value in zip(positions, mean_llr)
+                        if pd.notna(position) and math.isfinite(float(value))
+                    }
+                    extra.update(
+                        has_esm=True,
+                        esm_min=float(np.nanmin(mean_llr)),
+                        esm_max=float(np.nanmax(mean_llr)),
+                        esm_values=tolerance,
+                    )
+
+            peak_condition = None
+            peak_expression = None
+            if expression_values:
+                peak_condition = max(expression_values, key=expression_values.get)
+                peak_expression = expression_values[peak_condition]
+
+            assets["xlsx_b64"] = _xlsx_b64(
+                fam=accession,
+                members=[accession],
+                annotation=annotation_row if len(annotation_row) else None,
+                tm=None,
+                usm=None,
+                idm=None,
+                blast_pairs=None,
+                sig=None,
+                exp=expression if expression is not None and len(expression) else None,
+                pocket_entry=pocket_entry,
+                pocket_raw=_pocket_raw_tables(results_dir, accession, pocket_entry),
+                trees={},
+                tree_status={},
+                fit_stats={},
+                analysis_kind="singleton",
+            )
+            PAY[accession] = {
+                "kind": "singleton",
+                "members": [accession],
+                "order": [accession],
+                "struct": structures,
+                "transforms": {},
+                "seq": sequences,
+                "assets": assets,
+                "newick": "",
+                "maxid": 0,
+            }
+            EXTRA[accession] = extra
+
+            plddt = _finite_float(member_row.get("plddt"))
+            length = _finite_float(member_row.get("length"))
+            SINGLETONS.append({
+                "id": accession,
+                "acc": accession,
+                "gene": member_annotation.get("gene", ""),
+                "label": (
+                    annotation_payload.get("label", "novel/unknown")
+                    if annotation_payload
+                    else "annotation unavailable"
+                ),
+                "eff": member_annotation.get("eff", ""),
+                "tmr": member_annotation.get("tm", 0),
+                "novel": member_annotation.get("novel"),
+                "pfam": member_annotation.get("pfam", ""),
+                "ipr": member_annotation.get("ipr", ""),
+                "pdb": member_annotation.get("pdb", ""),
+                "pdb_tm": member_annotation.get("pdb_tm"),
+                "afdb": member_annotation.get("afdb", ""),
+                "afdb_hit": member_annotation.get("afdb_hit", ""),
+                "afdb_tm": member_annotation.get("afdb_tm"),
+                "plddt": plddt,
+                "length": int(length) if length is not None else None,
+                "pocket": bool(
+                    extra.get("p2rank_resi") or extra.get("fpocket_resi")
+                ),
+                "pocket_method": extra.get("pocket_src"),
+                "pocket_score": _finite_float(extra.get("pocket_score")),
+                "has_esm": bool(extra.get("has_esm")),
+                "rna_condition": peak_condition,
+                "rna_peak": peak_expression,
+                "rna": expression_values,
+            })
 
     # cross-family structural edges: reuse classification/edges if a cross-fam TM file exists
     NET_edges = []
@@ -984,7 +1300,14 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             with open(fp, "rb") as _fh:
                 SUMMARY[key] = _b64.b64encode(_fh.read()).decode()
 
-    D = dict(NET=dict(nodes=NET_nodes, edges=NET_edges), EXTRA=EXTRA, REFPDB=REFPDB, PAY=PAY, SUMMARY=SUMMARY)
+    D = dict(
+        NET=dict(nodes=NET_nodes, edges=NET_edges),
+        SINGLETONS=SINGLETONS,
+        EXTRA=EXTRA,
+        REFPDB=REFPDB,
+        PAY=PAY,
+        SUMMARY=SUMMARY,
+    )
 
     # assemble via string splice (never re.sub)
     prefix = _read_tpl("prefix.html")            # ends with 'var D='
@@ -992,8 +1315,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     # ---- page title: user-editable config.output.project_title, else auto from species ----
     # counts come from the actual data (not hardcoded) so a subset run reports its own size.
     n_fam = len(NET_nodes)
-    n_prot = int(pd.to_numeric(master.get("n_members"), errors="coerce").fillna(0).sum()) \
+    n_prot = len(members_all) if members_all is not None else (
+        int(pd.to_numeric(master.get("n_members"), errors="coerce").fillna(0).sum())
         if "n_members" in master.columns else 0
+    )
     import html as _html
     user_title = str(config.get("output", {}).get("project_title", "") or "").strip()
     if user_title:
@@ -1002,8 +1327,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         species = str(config.get("strain", {}).get("species", "") or "").strip()
         head = (_html.escape(species) + " secretome") if species else "SUSS structural atlas"
         head += " &middot; SUSS structural atlas"
-    counts = f"{n_fam} families, {n_prot} secreted proteins" if n_prot else f"{n_fam} families"
-    title_html = f"{head} &mdash; {counts} &middot; <b>click a node</b>"
+    counts = (
+        f"{n_fam} families, {len(SINGLETONS)} singletons, {n_prot} secreted proteins"
+        if n_prot else f"{n_fam} families, {len(SINGLETONS)} singletons"
+    )
+    title_html = f"{head} &mdash; {counts}"
     prefix = prefix.replace("__ATLAS_TITLE__", title_html)
     databridge = _read_tpl("databridge.js")
     renderer = _read_tpl("renderer.js")
@@ -1027,5 +1355,5 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     os.makedirs(os.path.dirname(out_html), exist_ok=True)
     with open(out_html, "w", encoding="utf-8") as fh:
         fh.write(doc)
-    return dict(families=len(NET_nodes), edges=len(NET_edges),
+    return dict(families=len(NET_nodes), singletons=len(SINGLETONS), edges=len(NET_edges),
                 bytes=len(doc), mode=mode, out=out_html)
