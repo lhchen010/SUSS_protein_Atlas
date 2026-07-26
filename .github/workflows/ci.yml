@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        run: python -m pip install numpy pandas openpyxl pytest
+        run: python -m pip install biopython numpy pandas openpyxl pytest
       - name: Run focused unit tests
         run: python -m pytest -q
       - name: Compile workflow Python

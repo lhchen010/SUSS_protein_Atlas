@@ -501,7 +501,7 @@ def _newick_to_svg(nwk, hub=None):
 
 
 def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
-              pocket_entry, pocket_raw, trees, fit_stats):
+              pocket_entry, pocket_raw, trees, tree_status, fit_stats):
     """Build the complete, auditable per-family analysis workbook."""
     try:
         buf = io.BytesIO()
@@ -555,8 +555,22 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
             for sheet, table in (pocket_raw or {}).items():
                 table.to_excel(xl, sheet_name=sheet[:31], index=False)
 
-            pd.DataFrame([{"metric": metric, "newick": newick} for metric, newick in trees.items()]).to_excel(
-                xl, sheet_name="foldtree", index=False)
+            metric_status = (tree_status or {}).get("metrics", {})
+            tree_rows = []
+            for metric, newick in trees.items():
+                status = metric_status.get(metric, {})
+                tree_rows.append({
+                    "metric": metric,
+                    "status": status.get("status", "status_unavailable"),
+                    "rooting_method": status.get("rooting_method"),
+                    "source_stage": status.get("source_stage"),
+                    "reason": status.get("reason"),
+                    "newick": newick,
+                })
+            pd.DataFrame(
+                tree_rows,
+                columns=["metric", "status", "rooting_method", "source_stage", "reason", "newick"],
+            ).to_excel(xl, sheet_name="foldtree", index=False)
             fit_rows = []
             for member, stats in fit_stats.items():
                 row = {"member": member, **stats}
@@ -577,7 +591,7 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
                 ("pocket_residues", "One row per detector, pocket, and lining residue."),
                 ("fpocket_pockets", "All descriptors parsed from the detector-native fpocket info file."),
                 ("p2rank_pockets", "Complete detector-native P2Rank predictions table with all original columns."),
-                ("foldtree", "All available FoldTree Newick trees, one row per configured metric."),
+                ("foldtree", "FoldTree Newick trees with per-metric rooting method and recovery status."),
                 ("RNAseq", "Per-member, replicate-collapsed RNA-seq expression for this family."),
                 ("per_site", "Reference-residue conservation, SASA, pocket, and other site-level evidence."),
                 ("superposition", "Hub-referenced rigid-body fit method, paired CA count, and RMSD."),
@@ -700,17 +714,41 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         # tree; every available metric is retained in the family workbook.
         newick = ""
         trees = {}
+        tree_status = {}
         for metric in config.get("signals", {}).get("foldtree_metrics", ["foldtree", "alntmscore", "lddt"]):
             tree_path = os.path.join(fd, f"{fam}_{metric}.nwk")
             if os.path.exists(tree_path):
                 trees[str(metric)] = open(tree_path, encoding="utf-8", errors="replace").read().strip()
+        tree_status_path = os.path.join(fd, f"{fam}_foldtree_status.json")
+        if os.path.exists(tree_status_path):
+            try:
+                tree_status = json.load(open(tree_status_path, encoding="utf-8"))
+            except Exception:
+                tree_status = {}
         nwk_p = os.path.join(fd, f"{fam}_foldtree.nwk")
         if os.path.exists(nwk_p):
             newick = open(nwk_p).read().strip()
             assets["tree_svg"] = _svg_datauri(_newick_to_svg(newick, hub=hub))
 
         # ---- EXTRA: conservation + pocket (fpocket/P2Rank) + ESM + hub + cysteines ----
-        ex = dict(ref_used=members[0] if members else "", hub=hub, hub_meanTM=hub_meanTM)
+        primary_tree_status = tree_status.get("metrics", {}).get("foldtree", {})
+        rooting_method = primary_tree_status.get("rooting_method")
+        rooting_reason = primary_tree_status.get("reason")
+        if rooting_method == "mad":
+            rooting_label = "MAD root"
+        elif rooting_method == "midpoint" and rooting_reason == "small_family_policy":
+            rooting_label = "midpoint root (small-family policy)"
+        elif rooting_method == "midpoint":
+            rooting_label = "midpoint root (MAD fallback)"
+        else:
+            rooting_label = "rooting status unavailable"
+        ex = dict(
+            ref_used=members[0] if members else "",
+            hub=hub,
+            hub_meanTM=hub_meanTM,
+            foldtree_status=tree_status,
+            foldtree_rooting_label=rooting_label,
+        )
         # US-align (independent-algorithm) TM cross-check summary for this family
         if tm_us_mean is not None:
             ex["tm_us_mean"] = tm_us_mean
@@ -841,7 +879,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             annotation=(anno[anno["family"].astype(str) == str(fam)].copy()
                         if len(anno) and "family" in anno.columns else None),
             tm=tm, usm=usm, idm=idm, blast_pairs=blast_pairs, sig=sig, exp=exp, pocket_entry=pk,
-            pocket_raw=_pocket_raw_tables(results_dir, fam, pk), trees=trees, fit_stats=fit_stats)
+            pocket_raw=_pocket_raw_tables(results_dir, fam, pk), trees=trees,
+            tree_status=tree_status, fit_stats=fit_stats)
         # ESM-tolerance-colored ref PDB: the renderer's "ESM" structure mode reads
         # REFPDB["<fam>_esm"]; without it, clicking the ESM button feeds addModel(undefined)
         # and blanks the viewer. Build it from the ESM ref's embedded structure + per-site

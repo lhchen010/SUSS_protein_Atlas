@@ -40,6 +40,10 @@ qc:
 
 signals:                          # locked; not recommended to change
   foldtree_metrics: [foldtree, alntmscore, lddt]
+  foldtree_rooting:
+    primary: mad
+    fallback: midpoint
+    small_family_max: 3
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
   pockets: [fpocket, p2rank]
