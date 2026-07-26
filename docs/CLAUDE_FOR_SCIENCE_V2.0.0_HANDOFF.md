@@ -76,6 +76,41 @@ The v2 test suite verifies:
 
 Pre-deployment local result: `24 passed`.
 
+## 4070 staging validation
+
+The existing *C. orbiculare* run was upgraded in an isolated 4070 staging directory before
+production deployment. The completed run contains:
+
+- 1,144 proteins;
+- 105 structural families;
+- 249 singleton proteins;
+- 354 pocket targets (105 family representatives plus 249 singletons);
+- 354 complete fpocket results and 354 complete P2Rank executions;
+- 354 ESM targets, including all 249 singletons;
+- direct annotation, EffectorP, and DeepTMHMM records for all 249 singletons;
+- 130 singleton PDB100 hits and 144 singleton AFDB/Swiss-Prot hits.
+
+The complete staging workflow finished `112/112` Snakemake jobs. The original v2 HTML was
+623 MB because singleton structures were redundantly embedded in several derived representations.
+The final renderer stores each singleton PDB once and creates pLDDT, ESM, and pocket-colored
+representations in the browser. The resulting self-contained atlas is 436,000,474 bytes.
+
+Chromium acceptance testing confirmed:
+
+- the page completes parsing with no console warnings or errors;
+- the singleton button reports `Singletons (249)`;
+- the table shows 50 rows per page and `1-50 of 249`;
+- accession, annotation, EffectorP, DeepTMHMM, and Foldseek-prefixed searches update the table;
+- `annotation:thioredoxin` returns 6 proteins;
+- `effectorp:apoplastic` returns 56 proteins;
+- `tmr:9` returns 4 proteins;
+- `pdb:1xw9` returns 1 protein;
+- TDZ13209.1 displays RNA-seq, PDB100/AFDB hits and TM scores, EffectorP, DeepTMHMM,
+  fpocket, P2Rank, and ESM evidence;
+- pLDDT, pocket, and ESM structure modes render a nonblank 3D canvas;
+- a 390 x 844 viewport has no page-level horizontal overflow and stacks the detail panel below
+  the singleton table.
+
 ## Claude acceptance checklist
 
 1. Open the atlas and confirm only true families appear in **Cluster network**.
