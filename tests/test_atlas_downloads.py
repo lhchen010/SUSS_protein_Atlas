@@ -290,6 +290,9 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     assert '"pdb_tm": 0.63' in html
     assert '"afdb_tm": 0.71' in html
     assert '"NET": {"nodes": [], "edges": []}' in html
+    assert '"REFPDB": {}' in html
+    assert '"structures_zip_b64":' not in html
+    assert html.count("ATOM      1") == 1
 
 
 def test_old_pocket_results_are_enriched_from_raw_outputs():
@@ -358,6 +361,9 @@ def test_singleton_workbench_is_separate_from_family_network():
     assert "function singletonMatches" in renderer
     assert "function buildSingletonStructPane" in renderer
     assert "function singletonDlbtn" in renderer
+    assert "function basePdb" in renderer
+    assert "function esmPdb" in renderer
+    assert "function pdbWithValues" in renderer
     assert "Foldseek PDB100" in renderer
     assert "Foldseek AFDB / Swiss-Prot" in renderer
     assert 'setMode(\\\'quality\\\')' in renderer

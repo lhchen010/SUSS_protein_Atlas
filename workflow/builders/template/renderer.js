@@ -321,16 +321,19 @@ function annHTML(fam){
 function b64toBlob(b64,mime){var bin=atob(b64),len=bin.length,arr=new Uint8Array(len);for(var i=0;i<len;i++)arr[i]=bin.charCodeAt(i);return new Blob([arr],{type:mime});}
 function dlSummary(kind){var b64=(SUMMARY||{})[kind];if(!b64){alert("No "+kind+" summary available in this atlas.");return;}var blob=b64toBlob(b64,"text/csv");var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download="family_summary_"+kind+".csv";document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
 function dlText(txt,fname){var blob=new Blob([txt],{type:"chemical/x-pdb"});var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
+function basePdb(fam){var p=PAY[fam]||{},member=(p.members||[])[0];return REFPDB[fam+"_base"]||REFPDB[fam+"_cons"]||(p.struct||{})[fam]||(p.struct||{})[member]||"";}
+function pdbWithValues(pdb,values,def){values=values||{};def=def==null?0:def;return pdb.split("\n").map(function(l){if((l.substring(0,4)==="ATOM"||l.substring(0,6)==="HETATM")&&l.length>=66){var ri=parseInt(l.substring(22,26)),v=Object.prototype.hasOwnProperty.call(values,ri)?Number(values[ri]):def;return l.substring(0,60)+v.toFixed(2).padStart(6," ")+l.substring(66);}return l;}).join("\n");}
+function esmPdb(fam){var d=EXTRA[fam]||{};return REFPDB[fam+"_esm"]||(d.esm_values?pdbWithValues(basePdb(fam),d.esm_values,0):"");}
 function alignedPdb(fam,m){var pdb=(PAY[fam].struct||{})[m],tr=(PAY[fam].transforms||{})[m];if(!pdb||!tr)return null;var r=tr.rotation,t=tr.translation;return pdb.split("\n").map(function(l){if((l.substring(0,4)==="ATOM"||l.substring(0,6)==="HETATM")&&l.length>=54){var x=parseFloat(l.substring(30,38)),y=parseFloat(l.substring(38,46)),z=parseFloat(l.substring(46,54));if(isFinite(x)&&isFinite(y)&&isFinite(z)){var nx=x*r[0][0]+y*r[1][0]+z*r[2][0]+t[0],ny=x*r[0][1]+y*r[1][1]+z*r[2][1]+t[1],nz=x*r[0][2]+y*r[1][2]+z*r[2][2]+t[2];return l.substring(0,30)+nx.toFixed(3).padStart(8," ")+ny.toFixed(3).padStart(8," ")+nz.toFixed(3).padStart(8," ")+l.substring(54);}}return l;}).join("\n");}
 function dlStruct(kind){var fam=curFam,d=EXTRA[fam];
- if(kind==="quality"){var base=REFPDB[fam+"_base"]||REFPDB[fam+"_cons"];if(!base){alert("No structure for "+fam);return;}dlText(base,fam+"_AlphaFold_structure.pdb");return;}
+ if(kind==="quality"){var base=basePdb(fam);if(!base){alert("No structure for "+fam);return;}dlText(base,fam+"_AlphaFold_structure.pdb");return;}
  if(kind==="cons"){dlText(REFPDB[fam+"_cons"],fam+"_conservation.pdb");return;}
- if(kind==="esm"){if(!d.has_esm){alert("No ESM scan for "+fam);return;}dlText(REFPDB[fam+"_esm"],fam+"_ESM_tolerance.pdb");return;}
- if(kind==="pocket"){var pock=(pockMethod==="p2rank")?(d.p2rank_resi||[]):(d.fpocket_resi||[]);var ps={};pock.forEach(function(r){ps[r]=1;});var lines=REFPDB[fam+"_cons"].split("\n"),out=[];lines.forEach(function(l){if(l.substring(0,4)==="ATOM"){var ri=parseInt(l.substring(22,26));var b=ps[ri]?"999.00":"  0.00";out.push(l.substring(0,60)+b.padStart(6," ")+l.substring(66));}else out.push(l);});dlText(out.join("\n"),fam+"_"+pockMethod+"_pocket.pdb");return;}
+ if(kind==="esm"){if(!d.has_esm){alert("No ESM scan for "+fam);return;}dlText(esmPdb(fam),fam+"_ESM_tolerance.pdb");return;}
+ if(kind==="pocket"){var pock=(pockMethod==="p2rank")?(d.p2rank_resi||[]):(d.fpocket_resi||[]);var ps={};pock.forEach(function(r){ps[r]=999;});dlText(pdbWithValues(basePdb(fam),ps,0),fam+"_"+pockMethod+"_pocket.pdb");return;}
  if(kind==="super"){var mem=PAY[fam].members,sel=[],mdl=1;mem.forEach(function(m){var pdb=alignedPdb(fam,m);if(selMembers[m]&&pdb){sel.push("MODEL "+(mdl++)+"\n"+pdb+"\nENDMDL");}});if(!sel.length){alert("No aligned members selected. Tick members on the tree first.");return;}dlText(sel.join("\n"),fam+"_superposed_"+(mdl-1)+"members.pdb");return;}}
 function dlPockResidues(){var fam=curFam,d=EXTRA[fam];
  // map residue number -> 3-letter AA from the reference PDB CA atoms
- var aa={},lines=(REFPDB[fam+"_cons"]||"").split("\n");
+ var aa={},lines=basePdb(fam).split("\n");
  lines.forEach(function(l){if(l.substring(0,4)==="ATOM"&&l.substring(12,16).trim()==="CA"){aa[parseInt(l.substring(22,26))]=l.substring(17,20).trim();}});
  var rows=["method,residue_number,amino_acid"];
  (d.fpocket_resi||[]).forEach(function(r){rows.push("fpocket,"+r+","+(aa[r]||""));});
@@ -428,7 +431,7 @@ function drawStruct(){
   document.getElementById("leg").innerHTML="Hub-referenced FoldMason/Kabsch superposition of "+shown+" selected members ("+repMode+"). Tight core = conserved scaffold; splayed loops = variable surface.";
   return;
  }
- var pdbtext=REFPDB[(structMode==="esm"&&d.has_esm)?curFam+"_esm":(structMode==="quality"?curFam+"_base":curFam+"_cons")];
+ var pdbtext=(structMode==="esm"&&d.has_esm)?esmPdb(curFam):(structMode==="quality"?basePdb(curFam):(REFPDB[curFam+"_cons"]||basePdb(curFam)));
  if(!pdbtext){document.getElementById("leg").innerHTML="Structure unavailable.";return;}
  glviewer.addModel(pdbtext,"pdb");
  if(structMode==="esm"){

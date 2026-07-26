@@ -1106,9 +1106,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             structures = {accession: pdbtext} if mode == "single" and pdbtext else {}
             sequence = seqs_all.get(accession) or (_seq_from_pdb(pdbtext) if pdbtext else "")
             sequences = {accession: sequence} if sequence else {}
-            assets = {
-                "structures_zip_b64": _structures_zip_b64(accession, structures),
-            }
+            assets = {}
 
             expression = None
             expression_values = {}
@@ -1173,8 +1171,6 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             if pdbtext:
                 plddt_min, plddt_max = _bfactor_range(pdbtext)
                 extra.update(plddt_min=plddt_min, plddt_max=plddt_max)
-                REFPDB[f"{accession}_base"] = pdbtext
-                REFPDB[f"{accession}_cons"] = pdbtext
                 cysteines = set()
                 for line in pdbtext.splitlines():
                     if line.startswith("ATOM") and line[17:20].strip() == "CYS":
@@ -1212,11 +1208,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                         has_esm=True,
                         esm_min=float(np.nanmin(mean_llr)),
                         esm_max=float(np.nanmax(mean_llr)),
+                        esm_values=tolerance,
                     )
-                    if pdbtext:
-                        REFPDB[f"{accession}_esm"] = _pdb_with_bfactors(
-                            pdbtext, tolerance
-                        )
 
             peak_condition = None
             peak_expression = None
