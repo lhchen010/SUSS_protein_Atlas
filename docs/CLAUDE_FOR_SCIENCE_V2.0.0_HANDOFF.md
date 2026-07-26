@@ -131,5 +131,31 @@ Chromium acceptance testing confirmed:
 
 ## Deployment record
 
-The final GitHub commit, pull request, release tag, package checksum, 4070 backup path, migrated
-run metrics, portal health checks, and rollback command are added here after production validation.
+Production deployment completed on 2026-07-26.
+
+| Item | Production value |
+|---|---|
+| GitHub pull request | `#10` (`SUSS Protein Atlas v2.0.0: singleton workbench`) |
+| Runtime merge commit | `43888c9cc69ef9553f31de1ef0509a78a2222e6c` |
+| Release tag | `v2.0.0` |
+| Engine package SHA-256 | `66a14ab922b51ceef503ad0dbca06f1e201049d6c7d5db459565d4c47244d0f7` |
+| Production run | `/home/claude/suss_portal/runs/20260723-003323-cor-7a72a790` |
+| Production atlas SHA-256 | `9d45e849a2d98f1f11d48bd97758138930a62721b1549e537b68e16441b88dac` |
+| Production atlas size | `436,000,474` bytes |
+| Pre-v2 backup | `/home/claude/suss_backups/20260726-2040-pre-v2.0.0` |
+| Portal health | HTTP 200 on port 8600 |
+
+The migrated production run reports 1,144 proteins, 105 families, and 249 singletons.
+`used_config.yaml` records engine version `2.0.0` and the runtime merge commit above. The final
+production workflow consistency pass completed `111/111` jobs after regenerating signatures,
+cards, summaries, provenance, and the atlas from the migrated pocket and ESM aggregates.
+
+Production browser validation used the portal's `/atlas` route, not the staging HTTP server. The
+page completed parsing, displayed `Singletons (249)`, rendered 50 table rows with
+`1-50 of 249`, hid the family network in singleton mode, and emitted no browser warnings or
+errors.
+
+To roll back, stop the portal, restore `suss_engine.tar.gz` and the files under `results/` from the
+pre-v2 backup to the production paths, restore the backed-up `cards` directory, and run
+`/home/claude/suss_portal/launch.sh`. The backup is additive and the original input files and
+annotation cache were not deleted.
