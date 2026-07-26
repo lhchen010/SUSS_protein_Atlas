@@ -1,5 +1,7 @@
-"""sasa_pocket rule — per-residue relative SASA for ALL proteins (incl. singletons)
-via freesasa, plus pocket detection on each family reference (fpocket local + P2Rank).
+"""SASA for every protein and pocket detection for family refs plus singletons.
+
+Singleton pockets are keyed by accession in pockets.json. They remain independent
+proteins rather than synthetic families.
 freesasa runs everywhere; fpocket is LOCAL only (not installed on 4070); P2Rank needs
 the java17 conda env. Emits sasa_all.csv + pockets.json. (recovered from sasa_all.py +
 fpocket_all.py; hub-ref aware.)
@@ -43,19 +45,26 @@ os.makedirs(os.path.dirname(out_sasa), exist_ok=True)
 pd.DataFrame(rows).to_csv(out_sasa, index=False)
 print(f"SASA: {len({r['acc'] for r in rows})} proteins, {len(rows)} residues")
 
-# --- pockets on each family reference (P2Rank on 4070/java17; fpocket falls to local) ---
+# --- pockets on each family reference and every singleton ---
 famdir = os.path.join(os.path.dirname(out_sasa), "families")
+members = pd.read_csv(snakemake.input.members)
 P2RANK = resolve_executable(p2rank, "P2Rank") if enabled and str(p2rank).strip() else None
 FPOCKET = resolve_executable(fpocket, "fpocket") if enabled and str(fpocket).strip() else None
 CONDA = resolve_executable(snakemake.params.conda, "conda") if enabled and java_env else None
 if enabled and not (P2RANK or FPOCKET):
     raise ValueError("steps.pocket is enabled but neither P2Rank nor fpocket is configured")
 pockets = {}
+targets = []
 for ff in sorted(glob.glob(os.path.join(famdir, "*.members.txt"))):
     fam = os.path.basename(ff).split(".")[0]
-    ref = None
     m = accre.search(open(ff).readline())
     ref = m.group(0) if m else None
+    if ref:
+        targets.append((fam, ref))
+for acc in sorted(members.loc[members.family == "singleton", "acc"].astype(str)):
+    targets.append((acc, acc))
+
+for fam, ref in targets:
     src = acc2pdb.get(ref)
     if not src: pockets[fam] = {"error": "no ref pdb", "ref": ref}; continue
     entry = {
@@ -123,4 +132,6 @@ for ff in sorted(glob.glob(os.path.join(famdir, "*.members.txt"))):
         entry["fpocket_status"] = "complete"
     pockets[fam] = entry
 json.dump(pockets, open(out_pock, "w"))
-print(f"pockets: {len([f for f in pockets if 'p2rank' in pockets[f] or 'fpocket' in pockets[f]])} families")
+singletons = int((members.family == "singleton").sum())
+complete = len([key for key in pockets if "p2rank" in pockets[key] or "fpocket" in pockets[key]])
+print(f"pockets: {complete} references ({singletons} singleton targets)")

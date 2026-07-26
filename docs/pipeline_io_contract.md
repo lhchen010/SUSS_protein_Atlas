@@ -26,14 +26,14 @@ signals.foldtree_metrics=[foldtree,alntmscore,lddt], esm_model=esm1b, plm_strate
 | 4 | classify | blastp tsv + edges.csv | classification.csv (core_SUSS/…) | blastp + merge | blast_evalue | all |
 | 5 | msa | family members PDB per family | {fam}.aln, {fam}.fasta | FoldMason | — | families n≥2 |
 | 6 | conservation | {fam}.aln + family tree | {fam}_r4s.res | Rate4Site | — | families n≥2 |
-| 7 | sasa_pocket | per-protein PDB (including singletons) | sasa_all.csv, pockets.json | freesasa+fpocket+P2Rank (java17) | — | all |
-| 8 | esm | per-sequence (including singletons) | {acc}_esm.csv | ESM-1b (esmscan.py) | esm_model,plm_strategy | all |
+| 7 | sasa_pocket | per-protein PDB, members.csv | sasa_all.csv, pockets.json keyed by family or singleton accession | freesasa+fpocket+P2Rank (java17) | — | all proteins; pocket detection on family references and every singleton |
+| 8 | esm | canonical sequences, members.csv | esm_all.csv keyed by family or singleton accession | ESM-1b (esmscan.py) | esm_model,plm_strategy | family references and every singleton |
 | 9 | foldtree | family members PDB per family | {fam}_{metric}.nwk ×3 | FoldTree (snakemake pipeline) | foldtree_metrics | families n≥2 |
 | 10 | annotate | all protein PDB+seq (including singletons) | member_annotation.csv, cluster_annotation.csv | Foldseek (pdb100/afdb)+InterProScan+EffectorP+DeepTMHMM | — | all |
 | 11 | rnaseq | rnaseq.xlsx + members | {fam}_expression.csv | pandas (log2 CPM) | — | all (if data present) |
 | → | signature | r4s + sasa + pockets | {fam}_signature.csv, B-factor PDB | custom | — | families n≥2 |
-| → | cards | all upstream | co_card_{fam}.png | matplotlib | — | per-family+singleton |
-| → | assemble | cards+structure+matrices+trees | atlas.html, cluster_composition.xlsx, master.csv | custom | html_mode (single/backend) | merge |
+| → | cards | all upstream | co_card_{fam}.png | matplotlib | — | per-family |
+| → | assemble | master, members, annotation, pockets, optional ESM/RNA, family assets | atlas.html | custom | html_mode (single/backend) | family network plus independent singleton workbench |
 
 ## Key Observations from Recycled Code (must handle during refactor)
 

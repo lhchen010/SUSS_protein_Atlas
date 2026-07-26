@@ -141,6 +141,157 @@ def test_family_workbook_contains_complete_evidence_sheets():
     assert foldtree.loc["foldtree", "status"] == "complete_with_fallback"
 
 
+def test_singleton_workbook_keeps_direct_evidence_and_omits_family_analyses():
+    annotation = pd.DataFrame([{
+        "acc": "PROT1",
+        "family": "singleton",
+        "annotation_status": "complete",
+        "interpro_status": "complete",
+        "foldseek_pdb_status": "complete",
+        "foldseek_afdb_status": "complete",
+        "effectorp_status": "complete",
+        "deeptmhmm_status": "complete",
+        "pfam_domains": "PF12345",
+        "interpro_entries": "IPR012345",
+        "pdb_hit": "4XYZ",
+        "pdb_tm": 0.63,
+        "afdbsp_hit": "AF-Q9TEST-F1",
+        "afdbsp_name": "Secreted test protein",
+        "afdbsp_tm": 0.71,
+        "effectorp": "effector",
+        "n_TMR": 0,
+        "novel": False,
+    }])
+    encoded = html_builder._xlsx_b64(
+        fam="PROT1",
+        members=["PROT1"],
+        annotation=annotation,
+        tm=None,
+        usm=None,
+        idm=None,
+        blast_pairs=None,
+        sig=None,
+        exp=pd.DataFrame([{"acc": "PROT1", "control": 1.0, "infection": 8.0}]),
+        pocket_entry={
+            "ref": "PROT1",
+            "fpocket_status": "complete",
+            "fpocket": {
+                "top_score": 2.4,
+                "n_pockets": 1,
+                "lining_residues": [2, 3],
+                "pockets": [{"pocket_id": 1, "score": 2.4, "lining_residues": [2, 3]}],
+            },
+        },
+        pocket_raw={},
+        trees={},
+        tree_status={},
+        fit_stats={},
+        analysis_kind="singleton",
+    )
+
+    workbook = pd.ExcelFile(io.BytesIO(base64.b64decode(encoded)))
+    assert {"README", "members", "annotation", "pocket_summary",
+            "pocket_predictions", "pocket_residues", "RNAseq"}.issubset(
+                workbook.sheet_names)
+    assert {"foldseek_TM", "usalign_TM", "blast_identity", "blast_pairs",
+            "foldtree", "superposition", "per_site"}.isdisjoint(workbook.sheet_names)
+    row = workbook.parse("annotation").iloc[0]
+    assert row["pdb_hit"] == "4XYZ"
+    assert row["pdb_tm"] == 0.63
+    assert row["afdbsp_name"] == "Secreted test protein"
+    assert row["afdbsp_tm"] == 0.71
+
+
+def test_singleton_annotation_payload_preserves_foldseek_scores_and_statuses():
+    payload = html_builder._annotation_payload(pd.DataFrame([{
+        "acc": "PROT1",
+        "family": "singleton",
+        "annotation_status": "complete",
+        "foldseek_pdb_status": "complete",
+        "foldseek_afdb_status": "complete",
+        "pdb_hit": "4XYZ",
+        "pdb_tm": 0.63,
+        "afdbsp_hit": "AF-Q9TEST-F1",
+        "afdbsp_name": "Secreted test protein",
+        "afdbsp_tm": 0.71,
+        "pfam_domains": "",
+        "interpro_entries": "",
+        "effectorp": "non-effector",
+        "n_TMR": 1,
+        "novel": pd.NA,
+    }]))
+
+    member = payload["members"][0]
+    assert payload["label"] == "Secreted test protein"
+    assert member["pdb_tm"] == 0.63
+    assert member["afdb_tm"] == 0.71
+    assert member["novel"] is None
+    assert member["annotation_status"] == "complete"
+    assert member["foldseek_pdb_status"] == "complete"
+    assert member["foldseek_afdb_status"] == "complete"
+
+
+def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
+    results = tmp_path / "results"
+    structures = tmp_path / "pdb"
+    results.mkdir()
+    structures.mkdir()
+    pd.DataFrame(columns=[
+        "family", "n_members", "mean_TM", "mean_identity", "suss_pct",
+        "mean_pLDDT", "mean_len", "max_identity",
+    ]).to_csv(results / "master.csv", index=False)
+    pd.DataFrame([{
+        "acc": "PROT1", "family": "singleton", "community": -1,
+        "deg": 0, "plddt": 91.2, "length": 3,
+    }]).to_csv(results / "members.csv", index=False)
+    pd.DataFrame([{
+        "acc": "PROT1", "family": "singleton", "annotation_status": "complete",
+        "foldseek_pdb_status": "complete", "foldseek_afdb_status": "complete",
+        "pdb_hit": "4XYZ", "pdb_tm": 0.63, "afdbsp_hit": "AF-Q9TEST-F1",
+        "afdbsp_name": "Secreted test protein", "afdbsp_tm": 0.71,
+        "pfam_domains": "PF12345", "interpro_entries": "IPR012345",
+        "effectorp": "effector", "n_TMR": 0, "novel": False,
+    }]).to_csv(results / "annotation.csv", index=False)
+    pd.DataFrame([{
+        "acc": "PROT1", "control": 1.0, "infection": 8.0,
+    }]).to_csv(results / "rnaseq_expression.csv", index=False)
+    (results / "seqs.fasta").write_text(">PROT1\nAAA\n")
+    (structures / "cor_PROT1.pdb").write_text(
+        _pdb([[0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    )
+    (results / "pockets.json").write_text(
+        '{"PROT1":{"ref":"PROT1","fpocket":{"top_score":2.4,'
+        '"n_pockets":1,"lining_residues":[2]}}}'
+    )
+    out_html = results / "atlas.html"
+
+    built = html_builder.build_atlas(
+        master_csv=str(results / "master.csv"),
+        cards_dir=str(results / "cards"),
+        composition_xlsx=str(results / "composition.xlsx"),
+        annotation_csv=str(results / "annotation.csv"),
+        results_dir=str(results),
+        out_html=str(out_html),
+        mode="single",
+        atlas_name="test",
+        config={
+            "strain": {"code": "cor", "species": "Test species"},
+            "input": {"pdb_dir": str(structures)},
+            "output": {"project_title": "Test singleton atlas"},
+        },
+    )
+
+    html = out_html.read_text()
+    assert built["families"] == 0
+    assert built["singletons"] == 1
+    assert '"kind": "singleton"' in html
+    assert '"SINGLETONS": [{"id": "PROT1"' in html
+    assert "Secreted test protein" in html
+    assert '"pdb_tm": 0.63' in html
+    assert '"afdb_tm": 0.71' in html
+    assert '"NET": {"nodes": [], "edges": []}' in html
+
+
 def test_old_pocket_results_are_enriched_from_raw_outputs():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -195,3 +346,19 @@ def test_network_search_supports_annotation_fields_and_highlighting():
     assert 'field==="structtm"' in renderer
     assert "networkNodes.update" in renderer
     assert "network.focus" in renderer
+
+
+def test_singleton_workbench_is_separate_from_family_network():
+    prefix = (ROOT / "workflow" / "builders" / "template" / "prefix.html").read_text()
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+
+    assert 'id="modesingletons"' in prefix
+    assert 'id="singletons"' in prefix
+    assert "function showSingleton" in renderer
+    assert "function singletonMatches" in renderer
+    assert "function buildSingletonStructPane" in renderer
+    assert "function singletonDlbtn" in renderer
+    assert "Foldseek PDB100" in renderer
+    assert "Foldseek AFDB / Swiss-Prot" in renderer
+    assert 'setMode(\\\'quality\\\')' in renderer
+    assert "function singletonTab" in renderer

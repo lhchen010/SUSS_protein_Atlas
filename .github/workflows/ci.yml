@@ -18,3 +18,7 @@ jobs:
         run: python -m pytest -q
       - name: Compile workflow Python
         run: python -m compileall -q workflow/scripts workflow/builders portal tests
+      - name: Check atlas JavaScript syntax
+        run: |
+          node --check workflow/builders/template/databridge.js
+          node --check workflow/builders/template/renderer.js

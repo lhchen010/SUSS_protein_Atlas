@@ -11,8 +11,10 @@ var networkNodes=new vis.DataSet(nodes),networkEdges=new vis.DataSet(edges);
 var network=new vis.Network(document.getElementById("net"),{nodes:networkNodes,edges:networkEdges},
  {nodes:{shape:"dot",scaling:{min:8,max:40,label:{min:11,max:22}},font:{size:14}},edges:{smooth:false,scaling:{min:1,max:6}},
   physics:{barnesHut:{gravitationalConstant:-3200,springLength:130},stabilization:{iterations:220}},interaction:{hover:true}});
+var atlasMode="clusters",singletonSort="acc",singletonSortDir=1,singletonPage=0,singletonPageSize=50,singletonFiltered=SINGLETONS.slice();
 var searchMatches=NET.nodes.map(function(n){return n.id;});
 function searchNorm(v){return v==null?"":String(v).toLowerCase().trim();}
+function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function memberValues(m){return[m.acc,m.gene,m.eff,m.pfam,m.ipr,m.pdb,m.afdb,m.afdb_hit,m.tm+" tmr",m.tm+" tm",m.novel?"novel":"known"];}
 function annotationValues(an){return[an.label,an.top_pfam,an.top_pdb,an.top_ipr].concat((an.members||[]).reduce(function(a,m){return a.concat(memberValues(m));},[]));}
 function fieldMatch(id,field,value){
@@ -41,10 +43,82 @@ function applyNetworkSearch(query){
  var clear=document.getElementById("clearsearch");if(clear)clear.style.visibility=q?"visible":"hidden";
  return searchMatches;
 }
-function clearNetworkSearch(){var input=document.getElementById("searchinput");if(input){input.value="";input.focus();}applyNetworkSearch("");}
+function singletonMatches(s,query){
+ var terms=searchNorm(query).split(/\s+/).filter(Boolean);
+ function values(field){
+  if(field==="gene"||field==="acc"||field==="accession")return[s.acc,s.gene];
+  if(field==="annotation"||field==="anno"||field==="domain"||field==="pfam"||field==="interpro")return[s.label,s.pfam,s.ipr];
+  if(field==="pdb")return[s.pdb,s.pdb_tm];
+  if(field==="afdb"||field==="foldseek")return[s.afdb,s.afdb_hit,s.afdb_tm,s.pdb,s.pdb_tm];
+  if(field==="effector"||field==="effectorp")return[s.eff];
+  if(field==="tmr"||field==="deeptmhmm")return[s.tmr,s.tmr+" tmr"];
+  if(field==="novel")return[s.novel?"novel":"known"];
+  if(field==="pocket")return[s.pocket?"pocket":"no pocket",s.pocket_method,s.pocket_score];
+  if(field==="rna"||field==="rnaseq")return[s.rna_condition,s.rna_peak].concat(Object.keys(s.rna||{}));
+  return[s.acc,s.gene,s.label,s.eff,s.tmr,s.pfam,s.ipr,s.pdb,s.pdb_tm,s.afdb,s.afdb_hit,s.afdb_tm,s.novel?"novel":"known",s.pocket_method,s.pocket_score,s.plddt,s.length,s.rna_condition,s.rna_peak];
+ }
+ return terms.every(function(term){var p=term.indexOf(":"),field=p>0?term.slice(0,p):"all",value=p>0?term.slice(p+1):term;return values(field).some(function(x){return searchNorm(x).indexOf(value)>=0;});});
+}
+function singletonFilterOn(id){var el=document.getElementById(id);return !!(el&&el.checked);}
+function singletonSortValue(s,key){
+ if(key==="eff")return searchNorm(s.eff);
+ if(key==="pocket")return s.pocket_score==null?-Infinity:Number(s.pocket_score);
+ if(key==="rna")return s.rna_peak==null?-Infinity:Number(s.rna_peak);
+ var value=s[key];return value==null?"":value;
+}
+function setSingletonSort(key){if(singletonSort===key)singletonSortDir*=-1;else{singletonSort=key;singletonSortDir=1;}singletonPage=0;renderSingletonTable();}
+function applySingletonSearch(query){
+ singletonFiltered=SINGLETONS.filter(function(s){
+  if(query&&!singletonMatches(s,query))return false;
+  if(singletonFilterOn("sf-eff")&&!(searchNorm(s.eff).indexOf("effector")>=0&&searchNorm(s.eff).indexOf("non")<0))return false;
+  if(singletonFilterOn("sf-novel")&&!s.novel)return false;
+  if(singletonFilterOn("sf-pocket")&&!s.pocket)return false;
+  if(singletonFilterOn("sf-tmr")&&!(Number(s.tmr)>0))return false;
+  return true;
+ });
+ singletonFiltered.sort(function(a,b){var av=singletonSortValue(a,singletonSort),bv=singletonSortValue(b,singletonSort);if(typeof av==="number"||typeof bv==="number"){av=Number(av);bv=Number(bv);return((isNaN(av)?-Infinity:av)-(isNaN(bv)?-Infinity:bv))*singletonSortDir;}return String(av).localeCompare(String(bv))*singletonSortDir;});
+ var maxPage=Math.max(0,Math.ceil(singletonFiltered.length/singletonPageSize)-1);if(singletonPage>maxPage)singletonPage=maxPage;
+ renderSingletonRows();
+ var st=document.getElementById("searchstatus");if(st)st.textContent=singletonFiltered.length+" singleton"+(singletonFiltered.length===1?"":"s");
+ return singletonFiltered;
+}
+function singletonHeader(label,key){return'<th onclick="setSingletonSort(\''+key+'\')" title="Sort by '+esc(label)+'">'+esc(label)+(singletonSort===key?(singletonSortDir>0?" \u25b2":" \u25bc"):"")+'</th>';}
+function singletonHit(name,tm){if(!name)return"\u2013";return'<span title="'+esc(name)+'">'+esc(name)+'</span>'+(tm!=null?'<br><span class="hint">TM '+fnum(tm,3)+'</span>':"");}
+function renderSingletonTable(){
+ var box=document.getElementById("singletons");if(!box)return;
+ box.innerHTML='<div class="singleton-head"><div><h2>Singleton proteins</h2><div class="hint">Independent proteins without a within-dataset structural family. Database Foldseek annotation remains available.</div></div><div class="singleton-actions"><button onclick="dlFilteredSingletons()">Download filtered CSV</button></div></div>'+
+ '<div class="singleton-filters"><b>Filter:</b><label><input id="sf-eff" type="checkbox" onchange="singletonFiltersChanged()"> Effector</label><label><input id="sf-novel" type="checkbox" onchange="singletonFiltersChanged()"> Novel</label><label><input id="sf-pocket" type="checkbox" onchange="singletonFiltersChanged()"> Has pocket</label><label><input id="sf-tmr" type="checkbox" onchange="singletonFiltersChanged()"> Has TM helix</label><label>Rows <select id="singletonPageSize" onchange="setSingletonPageSize(this.value)"><option>25</option><option selected>50</option><option>100</option></select></label></div>'+
+ '<div class="singleton-table-wrap"><table class="singleton-table"><thead><tr>'+singletonHeader("Protein","acc")+singletonHeader("Annotation","label")+singletonHeader("PDB100 hit","pdb_tm")+singletonHeader("AFDB / Swiss-Prot","afdb_tm")+singletonHeader("Effector / TMR","eff")+singletonHeader("Pocket","pocket")+singletonHeader("pLDDT / length","plddt")+singletonHeader("RNA-seq peak","rna")+'</tr></thead><tbody id="singletonRows"></tbody></table></div><div id="singletonPager" class="pager"></div>';
+ applySingletonSearch((document.getElementById("searchinput")||{}).value||"");
+}
+function renderSingletonRows(){
+ var body=document.getElementById("singletonRows");if(!body)return;
+ var start=singletonPage*singletonPageSize,rows=singletonFiltered.slice(start,start+singletonPageSize);
+ body.innerHTML=rows.map(function(s){
+  var eff=esc(s.eff||"\u2013")+(Number(s.tmr)>0?'<br><span class="status-pill warn">'+s.tmr+' TMR</span>':"");
+  var pocket=s.pocket?'<span class="status-pill good">'+esc(s.pocket_method||"pocket")+'</span>'+(s.pocket_score!=null?'<br><span class="hint">'+fnum(s.pocket_score,3)+'</span>':""):'<span class="hint">none</span>';
+  var tags=(s.novel?'<span class="status-pill novel">novel</span> ':"")+(s.gene?'<span class="hint">'+esc(s.gene)+'</span>':"");
+  var rna=s.rna_condition?esc(s.rna_condition)+'<br><span class="hint">'+fnum(s.rna_peak,2)+'</span>':'\u2013';
+  return'<tr data-singleton="'+esc(s.id)+'" onclick="showSingleton(\''+String(s.id).replace(/'/g,"\\'")+'\')"><td><b>'+esc(s.acc)+'</b><br>'+tags+'</td><td title="'+esc(s.label)+'">'+esc(s.label)+'</td><td>'+singletonHit(s.pdb,s.pdb_tm)+'</td><td>'+singletonHit(s.afdb||s.afdb_hit,s.afdb_tm)+'</td><td>'+eff+'</td><td>'+pocket+'</td><td>'+fnum(s.plddt,1)+'<br><span class="hint">'+(s.length==null?"\u2013":s.length+' aa')+'</span></td><td>'+rna+'</td></tr>';
+ }).join("");
+ var pages=Math.max(1,Math.ceil(singletonFiltered.length/singletonPageSize)),pager=document.getElementById("singletonPager");
+ if(pager)pager.innerHTML='<button onclick="changeSingletonPage(-1)" '+(singletonPage===0?"disabled":"")+' title="Previous page">\u2039</button><span>'+(singletonFiltered.length?start+1:0)+'\u2013'+Math.min(start+singletonPageSize,singletonFiltered.length)+' of '+singletonFiltered.length+'</span><button onclick="changeSingletonPage(1)" '+(singletonPage>=pages-1?"disabled":"")+' title="Next page">\u203a</button>';
+}
+function singletonFiltersChanged(){singletonPage=0;applySingletonSearch((document.getElementById("searchinput")||{}).value||"");}
+function changeSingletonPage(delta){var pages=Math.max(1,Math.ceil(singletonFiltered.length/singletonPageSize));singletonPage=Math.max(0,Math.min(pages-1,singletonPage+delta));renderSingletonRows();}
+function setSingletonPageSize(value){singletonPageSize=Number(value)||50;singletonPage=0;renderSingletonRows();}
+function csvCell(value){var text=value==null?"":String(value);return'"'+text.replace(/"/g,'""')+'"';}
+function dlFilteredSingletons(){var columns=["acc","gene","label","pdb","pdb_tm","afdb_hit","afdb","afdb_tm","eff","tmr","novel","pfam","ipr","pocket_method","pocket_score","plddt","length","rna_condition","rna_peak"],lines=[columns.join(",")];singletonFiltered.forEach(function(s){lines.push(columns.map(function(c){return csvCell(s[c]);}).join(","));});var blob=new Blob([lines.join("\n")+"\n"],{type:"text/csv"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="singletons_filtered.csv";document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
+function applyActiveSearch(query){return atlasMode==="singletons"?applySingletonSearch(query):applyNetworkSearch(query);}
+function clearAtlasSearch(){var input=document.getElementById("searchinput");if(input){input.value="";input.focus();}applyActiveSearch("");}
+function setAtlasMode(mode){
+ atlasMode=mode;var single=mode==="singletons";document.getElementById("net").classList.toggle("mode-hidden",single);document.getElementById("singletons").classList.toggle("mode-hidden",!single);document.getElementById("modeclusters").className=single?"":"on";document.getElementById("modesingletons").className=single?"on":"";
+ var input=document.getElementById("searchinput");if(input)input.placeholder=single?"Search singleton gene, annotation, Foldseek hit":"Search clusters";
+ if(single){renderSingletonTable();document.getElementById("side").innerHTML='<p class="hint">Select a singleton row to inspect its structure and evidence.</p>';}else{applyNetworkSearch(input?input.value:"");setTimeout(function(){network.redraw();network.fit();},50);document.getElementById("side").innerHTML='<p class="hint">Click a family node to load data, structure, tree and downloads.</p>';}
+}
 var searchInput=document.getElementById("searchinput"),searchTimer=null;
-if(searchInput){searchInput.addEventListener("input",function(){var q=this.value;clearTimeout(searchTimer);searchTimer=setTimeout(function(){applyNetworkSearch(q);},80);});searchInput.addEventListener("keydown",function(e){if(e.key==="Escape"){clearNetworkSearch();e.preventDefault();}else if(e.key==="Enter"){var found=applyNetworkSearch(this.value);if(found.length===1){network.selectNodes(found);network.focus(found[0],{scale:1.15,animation:true});showFamily(found[0]);}else if(found.length>1){network.fit({nodes:found,animation:true});}e.preventDefault();}});}
-var clearSearchButton=document.getElementById("clearsearch");if(clearSearchButton)clearSearchButton.addEventListener("click",clearNetworkSearch);applyNetworkSearch("");
+if(searchInput){searchInput.addEventListener("input",function(){var q=this.value;clearTimeout(searchTimer);searchTimer=setTimeout(function(){applyActiveSearch(q);},80);});searchInput.addEventListener("keydown",function(e){if(e.key==="Escape"){clearAtlasSearch();e.preventDefault();}else if(e.key==="Enter"&&atlasMode==="clusters"){var found=applyNetworkSearch(this.value);if(found.length===1){network.selectNodes(found);network.focus(found[0],{scale:1.15,animation:true});showFamily(found[0]);}else if(found.length>1){network.fit({nodes:found,animation:true});}e.preventDefault();}});}
+var clearSearchButton=document.getElementById("clearsearch");if(clearSearchButton)clearSearchButton.addEventListener("click",clearAtlasSearch);document.getElementById("modesingletons").textContent="Singletons ("+SINGLETONS.length+")";applyNetworkSearch("");
 var curFam=null,glviewer=null,structMode="cons",repMode="cartoon",selMembers={},curTree=null,pockMethod="fpocket";
 
 // ---------- Newick parser ----------
@@ -164,6 +238,34 @@ function showFamily(id){
  document.getElementById("side").innerHTML=h;
  if(hasS){ buildStructPane(id); setTimeout(function(){initViewer();renderTree(parseNewick(PAY[id].newick),document.getElementById("treebox"));},50); } else { document.getElementById("p5").innerHTML=annHTML(id); }
 }
+function singletonById(id){return SINGLETONS.find(function(s){return s.id===id;});}
+function showSingleton(id){
+ curFam=id;var s=singletonById(id),p=PAY[id],ex=EXTRA[id]||{};if(!s||!p)return;
+ document.querySelectorAll(".singleton-table tr.selected").forEach(function(row){row.classList.remove("selected");});
+ var selected=null;document.querySelectorAll(".singleton-table tr[data-singleton]").forEach(function(row){if(row.getAttribute("data-singleton")===id)selected=row;});if(selected)selected.classList.add("selected");
+ var flags=(s.novel?'<span class="status-pill novel">novel</span> ':"")+
+   (searchNorm(s.eff).indexOf("effector")>=0&&searchNorm(s.eff).indexOf("non")<0?'<span class="status-pill good">EffectorP</span> ':"")+
+   (Number(s.tmr)>0?'<span class="status-pill warn">'+esc(s.tmr)+' TMR</span> ':"");
+ var h='<h2>'+esc(s.acc)+'</h2><div style="margin-bottom:6px">'+flags+'</div>'+
+   '<table>'+row("Annotation",esc(s.label||"annotation unavailable"))+
+   row("Mean pLDDT",fnum(s.plddt,1))+row("Length",s.length==null?"\u2013":esc(s.length)+" aa")+
+   row("Pocket",s.pocket?esc(s.pocket_method||"detected")+" \u00b7 score "+fnum(s.pocket_score,3):"not detected")+
+   row("RNA-seq peak",s.rna_condition?esc(s.rna_condition)+" \u00b7 "+fnum(s.rna_peak,2):"not available")+'</table>'+
+   '<div class="tabs"><div class="tab on" onclick="singletonTab(0)">Structure</div><div class="tab" onclick="singletonTab(1)">RNA-seq</div><div class="tab" onclick="singletonTab(2)">Annotation</div></div>'+
+   '<div id="sp0" class="pane on"></div><div id="sp1" class="pane"></div><div id="sp2" class="pane"></div>';
+ document.getElementById("side").innerHTML=h;
+ buildSingletonStructPane(id);
+ setTimeout(initViewer,50);
+}
+function singletonTab(i){
+ var tabs=document.querySelectorAll("#side .tab");for(var k=0;k<tabs.length;k++)tabs[k].className="tab"+(k===i?" on":"");
+ for(var j=0;j<3;j++){var p=document.getElementById("sp"+j);if(p)p.className="pane"+(j===i?" on":"");}
+ var assets=PAY[curFam].assets||{};
+ if(i===1&&!document.getElementById("sp1").innerHTML){
+  document.getElementById("sp1").innerHTML=assets.rna_svg?'<h3>RNA-seq expression</h3><img src="'+assets.rna_svg+'">'+singletonDlbtn():'<p class="hint">RNA-seq data were not available for this protein.</p>'+singletonDlbtn();
+ }
+ if(i===2&&!document.getElementById("sp2").innerHTML)document.getElementById("sp2").innerHTML=annHTML(curFam)+singletonDlbtn();
+}
 function tab(i){var tabs=document.querySelectorAll(".tab");for(var k=0;k<tabs.length;k++)tabs[k].className="tab"+(tabs[k].getAttribute("onclick").indexOf("tab("+i+")")>=0?" on":"");
   for(var j=0;j<6;j++){var p=document.getElementById("p"+j);if(p)p.className="pane"+(j===i?" on":"");}
   if(i===5){if(!document.getElementById("p5").innerHTML)document.getElementById("p5").innerHTML=annHTML(curFam);return;}
@@ -175,6 +277,26 @@ function tab(i){var tabs=document.querySelectorAll(".tab");for(var k=0;k<tabs.le
 }
 function annHTML(fam){
   var an=ANN[fam];if(!an)return '<p class="hint">No annotation for this family.</p>';
+  if(PAY[fam]&&PAY[fam].kind==="singleton"){
+    var m=(an.members||[])[0]||{},novel=m.novel===true?"novel":m.novel===false?"not novel":"indeterminate";
+    var status=function(v){return v?esc(v):"\u2013";};
+    var hit=function(name,tm){return name?esc(name)+(tm!=null?' <span class="hint">(TM '+fnum(tm,3)+')</span>':""):"\u2013";};
+    var sh='<h3>Direct protein annotation</h3><table>';
+    sh+=row("Label",esc(an.label||"annotation unavailable"));
+    sh+=row("Pfam",status(m.pfam));
+    sh+=row("InterPro",status(m.ipr));
+    sh+=row("Foldseek PDB100",hit(m.pdb,m.pdb_tm));
+    sh+=row("Foldseek AFDB / Swiss-Prot",hit(m.afdb||m.afdb_hit,m.afdb_tm));
+    sh+=row("EffectorP",status(m.eff));
+    sh+=row("DeepTMHMM",Number(m.tm)>0?esc(m.tm)+" predicted transmembrane region(s)":"no transmembrane region");
+    sh+=row("Novel status",novel);
+    sh+='</table><h3>Analysis status</h3><table>';
+    sh+=row("Annotation",status(m.annotation_status));
+    sh+=row("PDB100 search",status(m.foldseek_pdb_status));
+    sh+=row("AFDB search",status(m.foldseek_afdb_status));
+    sh+='</table><div class="hint" style="margin-top:5px">Singleton novelty is reported only when the required domain and structural searches completed. Foldseek database hits remain valid even though no within-dataset family was formed.</div>';
+    return sh;
+  }
   var h='<h3>Cluster consensus</h3><table>';
   h+='<tr><td>Consensus label</td><td><b>'+an.label+'</b></td></tr>';
   h+='<tr><td>Members with a domain</td><td><b>'+an.pct_domain+'%</b></td></tr>';
@@ -201,6 +323,7 @@ function dlSummary(kind){var b64=(SUMMARY||{})[kind];if(!b64){alert("No "+kind+"
 function dlText(txt,fname){var blob=new Blob([txt],{type:"chemical/x-pdb"});var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
 function alignedPdb(fam,m){var pdb=(PAY[fam].struct||{})[m],tr=(PAY[fam].transforms||{})[m];if(!pdb||!tr)return null;var r=tr.rotation,t=tr.translation;return pdb.split("\n").map(function(l){if((l.substring(0,4)==="ATOM"||l.substring(0,6)==="HETATM")&&l.length>=54){var x=parseFloat(l.substring(30,38)),y=parseFloat(l.substring(38,46)),z=parseFloat(l.substring(46,54));if(isFinite(x)&&isFinite(y)&&isFinite(z)){var nx=x*r[0][0]+y*r[1][0]+z*r[2][0]+t[0],ny=x*r[0][1]+y*r[1][1]+z*r[2][1]+t[1],nz=x*r[0][2]+y*r[1][2]+z*r[2][2]+t[2];return l.substring(0,30)+nx.toFixed(3).padStart(8," ")+ny.toFixed(3).padStart(8," ")+nz.toFixed(3).padStart(8," ")+l.substring(54);}}return l;}).join("\n");}
 function dlStruct(kind){var fam=curFam,d=EXTRA[fam];
+ if(kind==="quality"){var base=REFPDB[fam+"_base"]||REFPDB[fam+"_cons"];if(!base){alert("No structure for "+fam);return;}dlText(base,fam+"_AlphaFold_structure.pdb");return;}
  if(kind==="cons"){dlText(REFPDB[fam+"_cons"],fam+"_conservation.pdb");return;}
  if(kind==="esm"){if(!d.has_esm){alert("No ESM scan for "+fam);return;}dlText(REFPDB[fam+"_esm"],fam+"_ESM_tolerance.pdb");return;}
  if(kind==="pocket"){var pock=(pockMethod==="p2rank")?(d.p2rank_resi||[]):(d.fpocket_resi||[]);var ps={};pock.forEach(function(r){ps[r]=1;});var lines=REFPDB[fam+"_cons"].split("\n"),out=[];lines.forEach(function(l){if(l.substring(0,4)==="ATOM"){var ri=parseInt(l.substring(22,26));var b=ps[ri]?"999.00":"  0.00";out.push(l.substring(0,60)+b.padStart(6," ")+l.substring(66));}else out.push(l);});dlText(out.join("\n"),fam+"_"+pockMethod+"_pocket.pdb");return;}
@@ -217,12 +340,13 @@ function dlPockResidues(){var fam=curFam,d=EXTRA[fam];
 function dlXlsx(){var fam=curFam,b64=PAY[fam].assets.xlsx_b64;var blob=b64toBlob(b64,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download=fam+"_data.xlsx";document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
 function dlSeqs(){var fam=curFam,sq=PAY[fam].seq||{},mem=PAY[fam].members,out=[],n=0;mem.forEach(function(m){if(sq[m]){out.push(">"+m);var s=sq[m];for(var i=0;i<s.length;i+=60)out.push(s.substring(i,i+60));n++;}});if(!n){alert("No sequences available for "+fam);return;}dlText(out.join("\n")+"\n",fam+"_members_"+n+"seqs.fasta");}
 function dlAllStruct(){var fam=curFam,b64=PAY[fam].assets.structures_zip_b64;if(!b64){alert("No structures embedded for "+fam);return;}var blob=b64toBlob(b64,"application/zip");var url=URL.createObjectURL(blob);var a=document.createElement("a");a.href=url;a.download=fam+"_member_structures.zip";document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);URL.revokeObjectURL(url);},1500);}
-function dlMemberStruct(){var fam=curFam,sel=document.getElementById("memSel"),m=sel?sel.value:"";var st=(PAY[fam].struct||{})[m];if(!st){alert("No structure for "+m);return;}dlText(st,fam+"_"+m+".pdb");}
-function dlMemberSeq(){var fam=curFam,sel=document.getElementById("memSel"),m=sel?sel.value:"";var s=(PAY[fam].seq||{})[m];if(!s){alert("No sequence for "+m);return;}var out=[">"+m];for(var i=0;i<s.length;i+=60)out.push(s.substring(i,i+60));dlText(out.join("\n")+"\n",fam+"_"+m+".fasta");}
+function dlMemberStruct(){var fam=curFam,sel=document.getElementById("memSel"),m=sel?sel.value:(PAY[fam].kind==="singleton"?fam:"");var st=(PAY[fam].struct||{})[m];if(!st){alert("No structure for "+(m||fam));return;}dlText(st,m+".pdb");}
+function dlMemberSeq(){var fam=curFam,sel=document.getElementById("memSel"),m=sel?sel.value:(PAY[fam].kind==="singleton"?fam:"");var s=(PAY[fam].seq||{})[m];if(!s){alert("No sequence for "+(m||fam));return;}var out=[">"+m];for(var i=0;i<s.length;i+=60)out.push(s.substring(i,i+60));dlText(out.join("\n")+"\n",m+".fasta");}
 function memberDlBar(fam){var st=PAY[fam].struct||{},sq=PAY[fam].seq||{},mem=PAY[fam].members;var ns=0,nq=0;mem.forEach(function(m){if(st[m])ns++;if(sq[m])nq++;});var opts=mem.map(function(m){return '<option value="'+m+'">'+m+'</option>';}).join("");return '<div class="dlbar" style="margin-top:8px;padding:8px;background:#f7f9fb;border:1px solid #e3e8ee;border-radius:5px">'+'<b>Download members</b> &middot; <span class="hint">'+nq+' sequences, '+ns+' structures</span><br>'+'<button class="dl" onclick="dlSeqs()">\u2b07 All sequences (FASTA)</button> '+'<button class="dl" onclick="dlAllStruct()">\u2b07 All structures (ZIP)</button>'+'<br><span class="hint">single member:</span> <select id="memSel">'+opts+'</select> '+'<button class="dl" onclick="dlMemberSeq()">\u2b07 .fasta</button> '+'<button class="dl" onclick="dlMemberStruct()">\u2b07 .pdb</button>'+'</div>';}
 function dlbtn(){return '<br><button class="dl" onclick="dlXlsx()">\u2b07 Download all '+curFam+' data (Excel: pockets / FoldTree / Foldseek / US-align / sequence / RNA-seq / per-site)</button>';}
+function singletonDlbtn(){return '<div class="dlbar" style="margin-top:8px;padding:8px;background:#f7f9fb;border:1px solid #e3e8ee;border-radius:5px"><b>Download singleton</b><br><button class="dl" onclick="dlMemberSeq()">\u2b07 Sequence (FASTA)</button><button class="dl" onclick="dlMemberStruct()">\u2b07 Structure (PDB)</button><button class="dl" onclick="dlXlsx()">\u2b07 All evidence (Excel)</button></div>';}
 function buildStructPane(id){
- var ex=EXTRA[id],mem=PAY[id].members;selMembers={};mem.forEach(function(m){selMembers[m]=true;});
+ var ex=EXTRA[id],mem=PAY[id].members;pockMethod="fpocket";selMembers={};mem.forEach(function(m){selMembers[m]=true;});
  var h='<div><button id="bcons" class="on" onclick="setMode(\'cons\')">Conservation</button>'+
    '<button id="bpocket" onclick="setMode(\'pocket\')">Pocket</button>'+
    '<button id="besm" onclick="setMode(\'esm\')">ESM tolerance</button>'+
@@ -249,10 +373,41 @@ function buildStructPane(id){
  h+='<div style="margin-top:5px"><button onclick="dlPockResidues()">\u2b07 Pocket residues (CSV)</button></div>';
  document.getElementById("p0").innerHTML=h;
 }
+function buildSingletonStructPane(id){
+ var ex=EXTRA[id]||{},p=PAY[id],hasStruct=!!((p.struct||{})[id]||REFPDB[id+"_base"]);
+ pockMethod=(ex.p2rank_resi||[]).length?"p2rank":"fpocket";
+ var h='<div><button id="bquality" class="on" onclick="setMode(\'quality\')">pLDDT</button>'+
+   '<button id="bpocket" onclick="setMode(\'pocket\')">Pocket</button>'+
+   '<button id="besm" onclick="setMode(\'esm\')">ESM tolerance</button></div>'+
+   '<div id="pockrow" style="margin-top:5px;display:none"><span class="hint">Pocket method:</span> '+
+   '<button id="pk_fpocket" class="'+(pockMethod==="fpocket"?"on":"")+'" onclick="setPock(\'fpocket\')">fpocket</button>'+
+   '<button id="pk_p2rank" class="'+(pockMethod==="p2rank"?"on":"")+'" onclick="setPock(\'p2rank\')">P2Rank</button></div>'+
+   '<div style="margin-top:5px"><span class="hint">Style:</span> '+
+   '<button id="r_cartoon" class="on" onclick="setRep(\'cartoon\')">Cartoon</button>'+
+   '<button id="r_surface" onclick="setRep(\'surface\')">Surface</button>'+
+   '<button id="r_stick" onclick="setRep(\'stick\')">Stick</button>'+
+   '<button id="r_sphere" onclick="setRep(\'sphere\')">Sphere</button>'+
+   '<button id="r_line" onclick="setRep(\'line\')">Line</button></div>'+
+   (hasStruct?'<div id="v3d"></div><div id="leg" class="hint"></div>':'<p class="hint">No structure was embedded for this protein.</p>')+
+   '<div style="margin-top:6px"><span class="hint">Download structure:</span><br>'+
+   '<button onclick="dlStruct(\'quality\')">Original PDB</button>'+
+   '<button onclick="dlStruct(\'esm\')">ESM PDB</button>'+
+   '<button onclick="dlStruct(\'pocket\')">Pocket-annotated PDB</button></div>';
+ h+=singletonDlbtn();
+ function reslist(a){return(a&&a.length)?a.join(", "):"\u2013";}
+ h+='<h3>Pocket and sequence evidence</h3><table>'+
+   row("fpocket",(ex.fpocket_resi||[]).length?("score "+fnum(ex.fpocket_score,3)+" \u00b7 "+ex.fpocket_resi.length+" residues"):"no pocket")+
+   row("P2Rank",(ex.p2rank_resi||[]).length?("score "+fnum(ex.p2rank_prob,3)+" \u00b7 "+ex.p2rank_resi.length+" residues"):"no pocket")+
+   row("Cysteines",ex.n_cys||0)+row("ESM scan",ex.has_esm?"available":"not available")+'</table>'+
+   '<div class="hint"><b>fpocket lining residues:</b> '+reslist(ex.fpocket_resi)+'</div>'+
+   '<div class="hint"><b>P2Rank lining residues:</b> '+reslist(ex.p2rank_resi)+'</div>'+
+   '<div style="margin-top:5px"><button onclick="dlPockResidues()">\u2b07 Pocket residues (CSV)</button></div>';
+ document.getElementById("sp0").innerHTML=h;
+}
 function allMem(v){for(var m in selMembers)selMembers[m]=!!v;paintTree();if(structMode==="super")drawStruct();}
-function initViewer(){var el=document.getElementById("v3d");el.innerHTML="";glviewer=$3Dmol.createViewer(el,{backgroundColor:"white"});structMode="cons";repMode="cartoon";setMode("cons");}
+function initViewer(){var el=document.getElementById("v3d");if(!el)return;el.innerHTML="";glviewer=$3Dmol.createViewer(el,{backgroundColor:"white"});var singleton=PAY[curFam]&&PAY[curFam].kind==="singleton";structMode=singleton?"quality":"cons";repMode="cartoon";setMode(structMode);}
 function setPock(x){pockMethod=x;["fpocket","p2rank"].forEach(function(y){var b=document.getElementById("pk_"+y);if(b)b.className=(y===x?"on":"");});if(structMode==="pocket")drawStruct();}
-function setMode(m){structMode=m;var pr=document.getElementById("pockrow");if(pr)pr.style.display=(m==="pocket")?"block":"none";["cons","pocket","esm","super"].forEach(function(x){var b=document.getElementById("b"+x);if(b)b.className=(x===m?"on":"");});drawStruct();}
+function setMode(m){structMode=m;var pr=document.getElementById("pockrow");if(pr)pr.style.display=(m==="pocket")?"block":"none";["quality","cons","pocket","esm","super"].forEach(function(x){var b=document.getElementById("b"+x);if(b)b.className=(x===m?"on":"");});drawStruct();}
 function setRep(r){repMode=r;["cartoon","surface","stick","sphere","line"].forEach(function(x){var b=document.getElementById("r_"+x);if(b)b.className=(x===r?"on":"");});drawStruct();}
 function applyStyle(sel,cs){
  if(repMode==="surface"){glviewer.setStyle(sel,{cartoon:{color:(cs.color||"white"),opacity:0.0}});glviewer.addSurface($3Dmol.SurfaceType.VDW,Object.assign({opacity:0.9},cs),sel);}
@@ -273,11 +428,17 @@ function drawStruct(){
   document.getElementById("leg").innerHTML="Hub-referenced FoldMason/Kabsch superposition of "+shown+" selected members ("+repMode+"). Tight core = conserved scaffold; splayed loops = variable surface.";
   return;
  }
- glviewer.addModel(REFPDB[(structMode==="esm"&&d.has_esm)?curFam+"_esm":curFam+"_cons"],"pdb");
+ var pdbtext=REFPDB[(structMode==="esm"&&d.has_esm)?curFam+"_esm":(structMode==="quality"?curFam+"_base":curFam+"_cons")];
+ if(!pdbtext){document.getElementById("leg").innerHTML="Structure unavailable.";return;}
+ glviewer.addModel(pdbtext,"pdb");
  if(structMode==="esm"){
   if(d.has_esm){applyStyle({},{colorscheme:{prop:"b",gradient:"rwb",min:d.esm_min,max:d.esm_max}});
    document.getElementById("leg").innerHTML='<span class="swatch" style="background:#2166ac"></span>constrained <span class="swatch" style="background:#b2182b"></span>tolerant &middot; ESM-1b '+fnum(d.esm_min,1)+"\u2026"+fnum(d.esm_max,1)+" &middot; red = mutation-tolerant (variable), blue = constrained";}
   else{applyStyle({},{color:"lightgrey"});document.getElementById("leg").innerHTML="ESM scan unavailable for this family.";}
+ }else if(structMode==="quality"){
+  var qmin=d.plddt_min==null?50:d.plddt_min,qmax=d.plddt_max==null?100:d.plddt_max;
+  applyStyle({},{colorscheme:{prop:"b",gradient:"rwb",min:qmin,max:qmax}});
+  document.getElementById("leg").innerHTML='<span class="swatch" style="background:#2166ac"></span>lower confidence <span class="swatch" style="background:#b2182b"></span>higher confidence &middot; AlphaFold pLDDT '+fnum(qmin,1)+"\u2026"+fnum(qmax,1);
  }else if(structMode==="cons"){
   applyStyle({},{colorscheme:{prop:"b",gradient:"rwb",min:d.cons_max,max:d.cons_min}});
   document.getElementById("leg").innerHTML='<span class="swatch" style="background:#2166ac"></span>variable <span class="swatch" style="background:#b2182b"></span>conserved &middot; Rate4Site '+fnum(d.cons_min,1)+"\u2026"+fnum(d.cons_max,1);
