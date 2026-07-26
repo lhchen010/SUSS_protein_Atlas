@@ -18,6 +18,11 @@ Then edit `config/config.yaml`:
    A blank optional tool means `not_run`; a configured tool that is missing or fails stops the rule.
    `cards` is required whenever `atlas` is enabled.
 
+`signals.foldtree_rooting` controls structural-tree rooting. Families with at most
+`small_family_max` members use midpoint rooting directly. Larger families use MAD first and
+fall back to midpoint rooting only when MAD output is missing or invalid. Every family records
+the actual method and recovery status in `<family>_foldtree_status.json`.
+
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).
 

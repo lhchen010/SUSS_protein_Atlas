@@ -1,16 +1,23 @@
-"""Run the official FoldTree sub-workflow and validate every declared tree."""
+"""Run FoldTree with validated, per-metric rooting recovery."""
+import datetime
+import json
 import os, glob, re, shutil, subprocess
 from pathlib import Path
+from foldtree_utils import TreeValidationError, recover_metric
 from runtime_utils import resolve_executable
 fam      = snakemake.wildcards.fam
 famfile  = snakemake.input.famfile
 pdb_dir  = snakemake.input.pdb_dir
-outputs  = list(snakemake.output)
+outputs  = list(snakemake.output.trees)
+status_output = str(snakemake.output.status)
 ftdir    = snakemake.params.ftdir
 smk      = resolve_executable(snakemake.params.snakemake, "FoldTree Snakemake")
 foldseek = resolve_executable(snakemake.params.foldseek, "FoldTree Foldseek")
 extra_path = str(snakemake.params.get("extra_path", "") or "")
-metrics  = [os.path.basename(o).rsplit("_", 1)[1][:-4] for o in outputs]  # F5_foldtree.nwk -> foldtree
+metrics  = [str(metric) for metric in snakemake.params.metrics]
+rooting = dict(snakemake.params.rooting)
+fallback = str(rooting.get("fallback", "midpoint"))
+small_family_max = int(rooting.get("small_family_max", 3))
 
 ftdir = str(Path(ftdir).expanduser().resolve())
 if not os.path.isfile(os.path.join(ftdir, "workflow", "fold_tree")):
@@ -37,8 +44,10 @@ if len(accs) < 3:
 
 work_root = os.path.abspath(os.path.join(famroot, "..", "..", ".."))  # engine workdir
 ftpkg = os.path.join(work_root, ".foldtree_pkg", fam)
-tree_targets = [f"{famroot}/{m}_struct_tree.PP.nwk.rooted.final" for m in metrics]
-cmd = [smk, "-s", "workflow/fold_tree", "--cores", "4", *tree_targets,
+small_family = len(accs) <= small_family_max
+target_suffix = "_struct_tree.PP.nwk" if small_family else "_struct_tree.PP.nwk.rooted.final"
+tree_targets = [f"{famroot}/{m}{target_suffix}" for m in metrics]
+cmd = [smk, "-s", "workflow/fold_tree", "--cores", "4", "--keep-going", *tree_targets,
        "--config", f"folder={famroot}", "filter=False", "custom_structs=True",
        f"foldseek_path={foldseek}"]
 env = dict(os.environ)
@@ -57,21 +66,63 @@ if not os.path.isdir(os.path.join(ftpkg, "workflow")):
     shutil.copytree(ftdir, ftpkg, symlinks=True, copy_function=link_or_copy)
 r = subprocess.run(cmd, cwd=ftpkg, env=env, capture_output=True, text=True,
                    timeout=1800, check=False)
-with open(log_path, "w", encoding="utf-8") as log_handle:
-    log_handle.write("$ " + " ".join(cmd) + "\n\nSTDOUT\n" + r.stdout + "\nSTDERR\n" + r.stderr)
-if r.returncode != 0:
-    raise RuntimeError(f"{fam}: FoldTree exited {r.returncode}; see {log_path}")
-# normalize the produced rooted newick to the declared outputs
+attempt = datetime.datetime.now(datetime.timezone.utc).isoformat()
+with open(log_path, "a", encoding="utf-8") as log_handle:
+    log_handle.write(
+        f"\n{'=' * 72}\nATTEMPT {attempt}\n$ {' '.join(cmd)}\n"
+        f"RETURN CODE {r.returncode}\n\nSTDOUT\n{r.stdout}\nSTDERR\n{r.stderr}\n"
+    )
+
+# Recover each metric independently. A non-zero nested return code is tolerated
+# only when every declared tree can still be validated and normalized.
 produced = glob.glob(os.path.join(famroot, "**", "*.nwk*"), recursive=True)
+metric_status = {}
+failures = []
 for o, m in zip(outputs, metrics):
-    cand = [p for p in produced if m in os.path.basename(p).lower() and "rooted" in p.lower()] \
-           or [p for p in produced if m in os.path.basename(p).lower()]
-    os.makedirs(os.path.dirname(o), exist_ok=True)
-    if not cand:
-        raise RuntimeError(f"{fam}: FoldTree completed but produced no {m} tree")
-    source = sorted(cand, key=len)[0]
-    if os.path.getsize(source) == 0:
-        raise RuntimeError(f"{fam}: FoldTree produced an empty {m} tree")
-    os.makedirs(os.path.dirname(o), exist_ok=True)
-    shutil.copy(source, o)
-print(f"{fam} foldtree: metrics {metrics}; produced {len(produced)} nwk; rc={r.returncode}")
+    try:
+        metric_status[m] = recover_metric(
+            famroot,
+            m,
+            o,
+            accs,
+            small_family=small_family,
+            fallback=fallback,
+        )
+    except TreeValidationError as exc:
+        failures.append(str(exc))
+        metric_status[m] = {
+            "status": "failed",
+            "rooting_method": None,
+            "reason": str(exc),
+        }
+
+status = {
+    "family": fam,
+    "n_members": len(accs),
+    "small_family_policy": small_family,
+    "nested_return_code": r.returncode,
+    "attempted_at": attempt,
+    "log": log_path,
+    "metrics": metric_status,
+}
+Path(status_output).parent.mkdir(parents=True, exist_ok=True)
+temporary_status = status_output + ".tmp"
+with open(temporary_status, "w", encoding="utf-8") as status_handle:
+    json.dump(status, status_handle, indent=2, sort_keys=True)
+    status_handle.write("\n")
+os.replace(temporary_status, status_output)
+
+with open(log_path, "a", encoding="utf-8") as log_handle:
+    log_handle.write("\nRECOVERY STATUS\n" + json.dumps(status, indent=2, sort_keys=True) + "\n")
+
+if failures:
+    stderr_tail = "\n".join((r.stderr or r.stdout).splitlines()[-30:])
+    raise RuntimeError(
+        f"{fam}: unrecoverable FoldTree metric(s): {'; '.join(failures)}\n"
+        f"Nested return code: {r.returncode}; log: {log_path}\n{stderr_tail}"
+    )
+
+print(
+    f"{fam} foldtree: metrics {metrics}; produced {len(produced)} nwk; "
+    f"rc={r.returncode}; small_family={small_family}"
+)

@@ -190,11 +190,18 @@ rule conservation:
 
 rule foldtree:
     input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
-    output: [f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]]
+    output:
+        trees=[f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]],
+        status=f"{FAM_DIR}/{{fam}}/{{fam}}_foldtree_status.json"
     params: ftdir=TOOLS["fold_tree"],
             snakemake=TOOLS.get("foldtree_snakemake", "snakemake"),
             foldseek=TOOLS.get("foldtree_foldseek", TOOLS["foldseek"]),
-            extra_path=TOOLS.get("foldtree_extra_path", "")
+            extra_path=TOOLS.get("foldtree_extra_path", ""),
+            metrics=config["signals"]["foldtree_metrics"],
+            rooting=config["signals"].get(
+                "foldtree_rooting",
+                {"primary": "mad", "fallback": "midpoint", "small_family_max": 3}
+            )
     script: "scripts/run_foldtree.py"
 
 rule signature:
@@ -252,6 +259,7 @@ def per_family_targets(wildcards):
             family_size = sum(1 for line in fh if line.strip())
         if on("foldtree") and family_size >= 3:
             t += expand(f"{FAM_DIR}/{f}/{f}_{{m}}.nwk", m=config["signals"]["foldtree_metrics"])
+            t.append(f"{FAM_DIR}/{f}/{f}_foldtree_status.json")
     # RNAseq: depend on each family's OWN {fam}_expression.csv (a declared output of the
     # rnaseq_family rule) so Snakemake guarantees it before cards/atlas and never lets
     # another job race/clobber it. The aggregate is an input to that per-family rule.

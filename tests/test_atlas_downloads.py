@@ -108,6 +108,16 @@ def test_family_workbook_contains_complete_evidence_sheets():
             "p2rank_pockets": pd.DataFrame([{"rank": 1, "score": 0.8, "residue_ids": "A_2 A_3"}]),
         },
         trees={"foldtree": "(A1,A2);", "lddt": "(A2,A1);"},
+        tree_status={
+            "metrics": {
+                "foldtree": {
+                    "status": "complete_with_fallback",
+                    "rooting_method": "midpoint",
+                    "source_stage": "pre_root",
+                    "reason": "mad_unavailable_or_invalid",
+                }
+            }
+        },
         fit_stats={"A1": {"reference": "A1", "method": "reference", "n_ca": 3, "rmsd": 0.0}},
     )
 
@@ -126,6 +136,9 @@ def test_family_workbook_contains_complete_evidence_sheets():
             "effectorp", "n_TMR", "novel", "interpro_status", "foldseek_pdb_status",
             "foldseek_afdb_status", "effectorp_status", "deeptmhmm_status"}.issubset(
                 annotation.columns)
+    foldtree = workbook.parse("foldtree").set_index("metric")
+    assert foldtree.loc["foldtree", "rooting_method"] == "midpoint"
+    assert foldtree.loc["foldtree", "status"] == "complete_with_fallback"
 
 
 def test_old_pocket_results_are_enriched_from_raw_outputs():
