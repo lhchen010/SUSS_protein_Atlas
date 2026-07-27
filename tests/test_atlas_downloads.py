@@ -56,6 +56,19 @@ def test_superpose_uses_foldmason_gap_correspondence():
     assert stats["rmsd"] < 1e-6
 
 
+def test_foldmason_alignment_records_preserve_gaps_and_map_members(tmp_path):
+    alignment = tmp_path / "F0.aln"
+    alignment.write_text(
+        ">cor_A1.pdb\nACD-EF\n"
+        ">cor_A2.pdb\nA-DGEF\n"
+    )
+
+    records = html_builder._read_fasta_records(alignment)
+    mapped = html_builder._records_by_member(records, ["A1", "A2"])
+
+    assert mapped == {"A1": "ACD-EF", "A2": "A-DGEF"}
+
+
 def test_structure_bundle_contains_individual_pdbs_and_manifest():
     encoded = html_builder._structures_zip_b64(
         "F0", {"A1": _pdb([[0, 0, 0], [1, 0, 0], [0, 1, 0]]),
@@ -291,6 +304,7 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     assert '"afdb_tm": 0.71' in html
     assert '"NET": {"nodes": [], "edges": []}' in html
     assert '"REFPDB": {}' in html
+    assert '"msa": {}' in html
     assert '"structures_zip_b64":' not in html
     assert html.count("ATOM      1") == 1
 
@@ -368,3 +382,20 @@ def test_singleton_workbench_is_separate_from_family_network():
     assert "Foldseek AFDB / Swiss-Prot" in renderer
     assert 'setMode(\\\'quality\\\')' in renderer
     assert "function singletonTab" in renderer
+
+
+def test_sequence_viewer_and_alignment_downloads_are_exposed_without_singleton_msa():
+    prefix = (ROOT / "workflow" / "builders" / "template" / "prefix.html").read_text()
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+    builder = (ROOT / "workflow" / "builders" / "html_builder.py").read_text()
+
+    assert "Sequence + MSA" in renderer
+    assert "function dlSeqs" in renderer
+    assert "function dlMsa" in renderer
+    assert "function buildSequencePane" in renderer
+    assert "function renderSequenceViewer" in renderer
+    assert "FoldMason structure-guided alignment" in renderer
+    assert "singletonTab(3)" in renderer
+    assert "not applicable to a singleton" in renderer
+    assert ".sequence-view" in prefix
+    assert "seq=seq, msa=msa" in builder

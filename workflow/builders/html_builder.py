@@ -1000,13 +1000,15 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                              os.path.join(results_dir, "..", "input", "pdb", f"{config.get('strain',{}).get('code','')}_{a}.pdb")):
                     if os.path.exists(cand):
                         struct[a] = open(cand, encoding="utf-8", errors="replace").read(); break
+        msa = _records_by_member(
+            _read_fasta_records(os.path.join(fd, f"{fam}.aln")), members
+        )
         # FoldMason-aware rigid-body alignment to the canonical hub. Compact transforms
         # are embedded once and applied by the viewer and superposed-PDB downloader.
         transforms = {}
         fit_stats = {}
         if struct:
             ref_member = hub if hub in struct else next(iter(struct))
-            msa = _records_by_member(_read_fasta_records(os.path.join(fd, f"{fam}.aln")), members)
             ref_pdb = struct[ref_member]
             identity_rotation = np.eye(3).tolist()
             identity_translation = [0.0, 0.0, 0.0]
@@ -1070,7 +1072,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             if s:
                 seq[a] = s
         PAY[fam] = dict(members=members, order=members, struct=struct, transforms=transforms,
-                        seq=seq, assets=assets,
+                        seq=seq, msa=msa, assets=assets,
                         newick=newick, maxid=float(r.get("max_identity", 0) or 0))
         if len(anno):
             payload = _annotation_payload(anno[anno.family == fam])
@@ -1241,6 +1243,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "struct": structures,
                 "transforms": {},
                 "seq": sequences,
+                "msa": {},
                 "assets": assets,
                 "newick": "",
                 "maxid": 0,

@@ -26,7 +26,7 @@ receive a searchable evidence table and dedicated single-protein viewer.
 | What defines a SUSS relationship? | Structural similarity with no BLAST-detected relationship at the configured threshold |
 | How is structure independently checked? | Within-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | What biological evidence is integrated? | Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, InterProScan, EffectorP, DeepTMHMM, and optional RNA-seq |
-| How are singletons handled? | As independent proteins with structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
+| How are singletons handled? | As independent proteins with sequence viewer/download, structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
 | What is delivered? | Offline interactive HTML with family and singleton workspaces, Excel summaries, machine-readable tables, per-protein assets, and run provenance |
 | How is it orchestrated? | Snakemake checkpoint expansion after the family count becomes known |
 
@@ -168,8 +168,8 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/all_families_master.csv` | Machine-readable integrated family table |
 | `results/member_annotation.csv` | Per-protein annotation values and component execution states |
-| `results/families/<family>/` | Downloadable family workbook with per-member annotation, Foldseek and US-align matrices, BLAST similarity, complete pocket outputs, FoldTree trees and rooting status, conservation, structures, and RNA-seq |
-| Singleton Excel download | Direct annotation, Foldseek PDB100/AFDB hits and TM scores, pockets, and RNA-seq; family-only matrices, FoldTree, conservation, and superposition are intentionally absent |
+| `results/families/<family>/` | Downloadable family workbook with per-member annotation, Foldseek and US-align matrices, BLAST similarity, FoldMason MSA, complete pocket outputs, FoldTree trees and rooting status, conservation, structures, and RNA-seq |
+| Singleton downloads | Mature-sequence FASTA plus an evidence workbook with annotation, Foldseek PDB100/AFDB hits and TM scores, pockets, and RNA-seq; family-only matrices, MSA, FoldTree, conservation, and superposition are intentionally absent |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
 
 ## Interactive atlas search
@@ -180,6 +180,11 @@ The atlas has two primary views:
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
   pockets, and transmembrane helices. Selecting a row opens structure, pocket, ESM, RNA-seq, and
   direct annotation evidence for that protein.
+
+Every cluster exposes all mature member sequences as FASTA plus the FoldMason structure-guided
+MSA as aligned FASTA. The compact sequence viewer switches between an individual member and the
+MSA only when its tab is opened. A singleton exposes its one mature sequence and FASTA download;
+MSA is intentionally omitted because it requires at least two proteins.
 
 Both views search locally without a server round trip. Plain text matches accessions, annotations,
 InterPro/Pfam terms, Foldseek PDB100 and AFDB/Swiss-Prot hits, EffectorP calls, DeepTMHMM results,
