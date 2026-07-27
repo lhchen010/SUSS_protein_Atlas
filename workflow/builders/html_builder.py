@@ -31,6 +31,7 @@ file exists.
   ANN[acc]    = direct singleton annotation and component statuses
 """
 import os, io, json, glob, base64, math, re, zipfile
+from collections import Counter
 import numpy as np, pandas as pd
 
 _TPL = os.path.join(os.path.dirname(__file__), "template")
@@ -192,6 +193,34 @@ def _annotation_payload(group):
         "fusion": bool(group.multi_domain.sum()) if "multi_domain" in group else False,
         "members": members,
     }
+
+
+def _overlapping_annotations(row, start, end):
+    """Return coordinate-bearing annotations that overlap one domain segment."""
+    annotations = []
+    if row is None:
+        return annotations
+    for column, source in (
+        ("pfam_domains", "Pfam"),
+        ("interpro_entries", "InterPro"),
+    ):
+        raw = _clean_cell(row.get(column, ""))
+        for token in re.split(r"\s*\|\s*", raw):
+            token = token.strip()
+            match = re.search(r"\((\d+)\s*-\s*(\d+)\)\s*$", token)
+            if not match:
+                continue
+            ann_start, ann_end = sorted(map(int, match.groups()))
+            overlap = max(0, min(int(end), ann_end) - max(int(start), ann_start) + 1)
+            if overlap:
+                annotations.append({
+                    "source": source,
+                    "label": token[:match.start()].strip(),
+                    "start": ann_start,
+                    "end": ann_end,
+                    "overlap": overlap,
+                })
+    return annotations
 
 
 def _read_fasta_records(path):
@@ -747,7 +776,7 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
                 ("p2rank_pockets", "Complete detector-native P2Rank predictions table with all original columns."),
                 ("RNAseq", "Per-member, replicate-collapsed RNA-seq expression for this family."),
                 ("per_site", "Reference-residue conservation, SASA, pocket, and other site-level evidence."),
-                ("structural_conservation", "FoldMason-column occupancy, AA/3Di entropy, and hub-relative structural LDDT."),
+                ("structural_conservation", "FoldMason-column occupancy, AA/3Di entropy, and official per-column LDDT with pair-support masking."),
                 ("sequence_MSA", "MAFFT alignment of the reference protein's sequence-homologous subgroup."),
                 ("structural_MSA_AA", "FoldMason structure-guided amino-acid alignment."),
                 ("structural_MSA_3Di", "FoldMason alignment represented in the 3Di structural alphabet."),
@@ -802,6 +831,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     )
     domain_members_all = load_csv(os.path.join(results_dir, "domain_members.csv"))
     domain_families_all = load_csv(os.path.join(results_dir, "domain_families.csv"))
+    domain_edges_all = load_csv(os.path.join(results_dir, "domain_edges.csv"))
+    domain_bridges_all = load_csv(os.path.join(results_dir, "domain_cross_edges.csv"))
 
     def structure_text(accession, family_dir=None):
         candidates = []
@@ -964,6 +995,15 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 ex["structural_lddt_min"] = float(values.min())
                 ex["structural_lddt_max"] = float(values.max())
                 ex["structural_lddt_mean"] = float(values.mean())
+                ex["structural_scored_resi"] = [
+                    int(value)
+                    for value in structural_cons.loc[
+                        structural_cons.structural_lddt.notna(), "resi"
+                    ]
+                ]
+                ex["structural_pair_threshold"] = _finite_float(
+                    structural_cons.get("pair_threshold", pd.Series([0.5])).iloc[0]
+                )
         family_subgroups = (
             sequence_subgroups_all[
                 sequence_subgroups_all.family.astype(str) == str(fam)
@@ -1420,17 +1460,154 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             with open(fp, "rb") as _fh:
                 SUMMARY[key] = _b64.b64encode(_fh.read()).decode()
 
+    member_parent = {}
+    if members_all is not None and {"acc", "family"}.issubset(members_all.columns):
+        member_parent = {
+            str(row.acc): str(row.family)
+            for row in members_all.itertuples()
+        }
+    annotation_by_acc = {}
+    if len(anno) and "acc" in anno.columns:
+        annotation_by_acc = {
+            str(row.acc): row
+            for _, row in anno.drop_duplicates("acc").iterrows()
+        }
+
+    enriched_domain_members = []
+    if domain_members_all is not None:
+        for _, segment in domain_members_all.iterrows():
+            acc = str(segment.acc)
+            parent = member_parent.get(acc, "")
+            workspace = acc if parent == "singleton" else parent
+            annotation_row = annotation_by_acc.get(acc)
+            member_evidence = {}
+            annotation_payload = ANN.get(workspace, {})
+            for item in annotation_payload.get("members", []):
+                if str(item.get("acc")) == acc:
+                    member_evidence = item
+                    break
+            expression_values = {}
+            if expression_all is not None and "acc" in expression_all.columns:
+                expression_row = expression_all[
+                    expression_all.acc.astype(str) == acc
+                ]
+                if len(expression_row):
+                    for column, value in expression_row.iloc[0].items():
+                        if column != "acc":
+                            number = _finite_float(value)
+                            if number is not None:
+                                expression_values[str(column)] = number
+            start, end = int(segment.start), int(segment.end)
+            overlaps = _overlapping_annotations(annotation_row, start, end)
+            extra = EXTRA.get(workspace, {})
+            pocket_residues = (
+                extra.get("pocket_resi", [])
+                if str(extra.get("ref_used", "")) == acc
+                else []
+            )
+            enriched_domain_members.append({
+                "domain_family": str(segment.domain_family),
+                "segment_id": str(segment.segment_id),
+                "acc": acc,
+                "start": start,
+                "end": end,
+                "length": int(segment.length),
+                "parent_family": parent,
+                "workspace": workspace,
+                "gene": member_evidence.get("gene", ""),
+                "eff": member_evidence.get("eff", ""),
+                "tmr": member_evidence.get("tm", 0),
+                "novel": member_evidence.get("novel"),
+                "pfam": member_evidence.get("pfam", ""),
+                "ipr": member_evidence.get("ipr", ""),
+                "pdb": member_evidence.get("pdb", ""),
+                "pdb_tm": member_evidence.get("pdb_tm"),
+                "afdb": member_evidence.get("afdb", ""),
+                "afdb_hit": member_evidence.get("afdb_hit", ""),
+                "afdb_tm": member_evidence.get("afdb_tm"),
+                "overlap_annotations": overlaps,
+                "pocket_residues": [
+                    int(residue) for residue in pocket_residues
+                    if start <= int(residue) <= end
+                ],
+                "expression": expression_values,
+                "structure_available": bool(
+                    (PAY.get(workspace, {}).get("struct", {}) or {}).get(acc)
+                ),
+                "sequence_available": bool(
+                    (PAY.get(workspace, {}).get("seq", {}) or {}).get(acc)
+                ),
+            })
+
+    annotations_by_domain = {}
+    for member in enriched_domain_members:
+        labels = [
+            annotation["label"]
+            for annotation in member["overlap_annotations"]
+            if annotation["label"]
+        ]
+        annotations_by_domain.setdefault(member["domain_family"], []).extend(labels)
+
+    domain_family_records = []
+    if domain_families_all is not None:
+        for _, family in domain_families_all.iterrows():
+            family_id = str(family.domain_family)
+            labels = Counter(annotations_by_domain.get(family_id, []))
+            domain_family_records.append({
+                "domain_family": family_id,
+                "n_segments": int(family.n_segments),
+                "n_proteins": int(family.n_proteins),
+                "n_edges": int(family.n_edges),
+                "mean_probability": _finite_float(family.mean_probability),
+                "mean_lddt": _finite_float(family.mean_lddt),
+                "mean_aligned_residues": _finite_float(
+                    family.mean_aligned_residues
+                ),
+                "top_annotation": labels.most_common(1)[0][0] if labels else "",
+                "n_annotated_segments": sum(
+                    bool(member["overlap_annotations"])
+                    for member in enriched_domain_members
+                    if member["domain_family"] == family_id
+                ),
+            })
+
+    domain_edge_records = []
+    if domain_edges_all is not None:
+        for _, edge in domain_edges_all.iterrows():
+            domain_edge_records.append({
+                "domain_family": str(edge.domain_family),
+                "source": str(edge.source),
+                "target": str(edge.target),
+                "evalue": _finite_float(edge.evalue),
+                "prob": _finite_float(edge.prob),
+                "bits": _finite_float(edge.bits),
+                "lddt": _finite_float(edge.lddt),
+                "fident": _finite_float(edge.fident),
+                "alnlen": int(edge.alnlen),
+                "shorter_coverage": _finite_float(edge.shorter_coverage),
+            })
+
+    domain_network_edges = []
+    if domain_bridges_all is not None:
+        for _, edge in domain_bridges_all.iterrows():
+            domain_network_edges.append({
+                "from": str(edge.source_family),
+                "to": str(edge.target_family),
+                "n": int(edge.n_edges),
+                "prob": _finite_float(edge.mean_probability),
+                "prob_max": _finite_float(edge.max_probability),
+                "lddt": _finite_float(edge.mean_lddt),
+                "lddt_max": _finite_float(edge.max_lddt),
+                "alnlen": _finite_float(edge.mean_aligned_residues),
+            })
+
     D = dict(
         NET=dict(nodes=NET_nodes, edges=NET_edges),
         SINGLETONS=SINGLETONS,
-        DOMAIN_FAMILIES=(
-            domain_families_all.to_dict("records")
-            if domain_families_all is not None else []
-        ),
-        DOMAIN_MEMBERS=(
-            domain_members_all.to_dict("records")
-            if domain_members_all is not None else []
-        ),
+        DOMAIN_FAMILIES=domain_family_records,
+        DOMAIN_MEMBERS=enriched_domain_members,
+        DOMAIN_EDGES=domain_edge_records,
+        DNET=dict(nodes=domain_family_records, edges=domain_network_edges),
         EXTRA=EXTRA,
         REFPDB=REFPDB,
         PAY=PAY,

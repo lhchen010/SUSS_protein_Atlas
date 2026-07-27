@@ -8,7 +8,8 @@
 #wrap{display:flex;flex:1;min-height:0}
 #primary{flex:1;border-right:1px solid #ddd;background:#fbfbfb;min-width:0;position:relative;overflow:hidden}
 #net,#singletons,#domains{width:100%;height:100%}
-#singletons,#domains{overflow:auto;padding:12px 14px;background:#f8fafb}
+#singletons{overflow:auto;padding:12px 14px;background:#f8fafb}
+#domains{background:#f8fafb}
 #primary.collapsed{flex:none;width:0;border:none;overflow:hidden}
 .mode-hidden{display:none!important}
 #divider{width:6px;cursor:col-resize;background:#e0e0e0;flex:none}
@@ -37,6 +38,10 @@ table{border-collapse:collapse;width:100%;font-size:12.5px}td{padding:3px 6px;bo
 .singleton-table td{padding:6px;border-bottom:1px solid #edf0f2;vertical-align:top;color:#26343b;width:auto;max-width:230px;overflow:hidden;text-overflow:ellipsis}
 .singleton-table tr{cursor:pointer}.singleton-table tbody tr:hover{background:#eef7fa}.singleton-table tr.selected{background:#dceff5}
 .domain-members{display:flex;gap:5px;flex-wrap:wrap}.domain-member{border:1px solid #cbd8de;background:#fff;border-radius:4px;padding:2px 6px;cursor:pointer;font-size:11px}.domain-member:hover{background:#e6f3f7;border-color:#6d9caf}
+.domain-summary{display:grid;grid-template-columns:repeat(3,minmax(90px,1fr));gap:6px;margin:9px 0}.domain-stat{border-left:3px solid #2a6b8a;padding:4px 7px;background:#f5f8fa;font-size:11px}.domain-stat b{display:block;font-size:16px;color:#203c49}
+#domainSegmentNet{height:300px;border:1px solid #d7e0e4;background:#fbfcfd;margin:7px 0}
+#domain3d{width:100%;height:280px;border:1px solid #d7e0e4;background:#fff;position:relative;margin:7px 0}
+.domain-evidence{border-top:1px solid #dce3e7;margin-top:9px;padding-top:2px}.domain-tags{display:flex;gap:4px;flex-wrap:wrap;margin:5px 0}.domain-tag{border:1px solid #9bb6c2;background:#edf6f8;border-radius:4px;padding:2px 6px;font-size:11px}.domain-actions{display:flex;gap:3px;flex-wrap:wrap;margin:7px 0}
 .status-pill{display:inline-block;border-radius:9px;padding:1px 6px;font-size:10px;white-space:nowrap;background:#e7ecef;color:#40525b}
 .status-pill.good{background:#dff0e4;color:#24623a}.status-pill.warn{background:#fff0d5;color:#8a5b00}.status-pill.novel{background:#f8dfe0;color:#932d34}
 .pager{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:7px;font-size:11px;color:#5c6a72}
@@ -67,7 +72,8 @@ svg .branch:hover{stroke:#e67e22 !important;stroke-width:3px !important}
  #wrap{display:block;overflow-y:auto}
  #primary{width:100%;height:52vh;min-height:300px;border-right:0;border-bottom:1px solid #ddd}
  #net,#singletons,#domains{width:100%;height:100%}
- #singletons,#domains{padding:9px}
+ #singletons{padding:9px}
+ .domain-summary{grid-template-columns:repeat(2,minmax(90px,1fr))}
  .singleton-table-wrap{max-height:none}
  #divider{display:none}
  #side{width:100%;height:auto;min-height:220px;overflow:visible}
@@ -78,6 +84,6 @@ svg .branch:hover{stroke:#e67e22 !important;stroke-width:3px !important}
 <div id="title">__ATLAS_TITLE__</div>
 <div id="viewbar"><span class="mode-tabs"><button id="modeclusters" class="on" onclick="setAtlasMode('clusters')">Full-length families</button><button id="modedomains" onclick="setAtlasMode('domains')">Domain families</button><button id="modesingletons" onclick="setAtlasMode('singletons')">Singletons</button></span><span class="viewgroup"><button id="tgprimary" onclick="toggleView('primary')" title="Show or hide the current main view">Hide main view</button><button id="tgside" onclick="toggleView('side')">Hide detail panel</button></span><span class="viewgroup"><b>Download:</b> <button id="dlclustered" onclick="dlSummary('clustered')" title="One row per full-length family">Families CSV</button><button id="dlsingletons" onclick="dlSummary('singletons')" title="One row per singleton">Singleton CSV</button></span><div id="netsearch" title="Search all fields or use gene:, annotation:, effectorp:, tmr:, pdb:, afdb:, novel:"><input id="searchinput" type="search" autocomplete="off" spellcheck="false" placeholder="Search full-length families" aria-label="Search atlas"><button id="clearsearch" type="button" title="Clear search" aria-label="Clear search">&times;</button><span id="searchstatus" aria-live="polite"></span></div></div><div id="wrap"><div id="primary"><div id="net"></div><div id="domains" class="mode-hidden"></div><div id="singletons" class="mode-hidden"></div></div><div id="divider"></div><div id="side"><p class="hint">Select a full-length family, domain family, or singleton.</p></div></div>
 <script>
-function toggleView(w){var el=document.getElementById(w);var b=document.getElementById("tg"+w);var col=el.classList.toggle("collapsed");if(b)b.textContent=(col?"Show ":"Hide ")+(w==="primary"?"main view":"detail panel");if(typeof network!=="undefined"&&network&&w==="primary"&&!col){setTimeout(function(){network.redraw();network.fit();},60);}}
+function toggleView(w){var el=document.getElementById(w);var b=document.getElementById("tg"+w);var col=el.classList.toggle("collapsed");if(b)b.textContent=(col?"Show ":"Hide ")+(w==="primary"?"main view":"detail panel");if(w==="primary"&&!col){setTimeout(function(){if(typeof network!=="undefined"&&network){network.redraw();network.fit();}if(typeof domainNetwork!=="undefined"&&domainNetwork){domainNetwork.redraw();domainNetwork.fit();}},60);}}
 (function(){var dragging=false;document.addEventListener("mousedown",function(e){if(e.target&&e.target.id==="divider"){dragging=true;e.preventDefault();}});document.addEventListener("mousemove",function(e){if(!dragging)return;var wrap=document.getElementById("wrap");var side=document.getElementById("side");var rect=wrap.getBoundingClientRect();var w=rect.right-e.clientX;if(w<120)w=120;if(w>rect.width-120)w=rect.width-120;side.style.width=w+"px";});document.addEventListener("mouseup",function(){if(dragging){dragging=false;if(typeof network!=="undefined"&&network){network.redraw();network.fit();}}});})();
 var D=

@@ -70,7 +70,18 @@ multiple `D` families.
 The portal exposes common F-family settings directly and keeps D-family controls under
 **Advanced**. The effective config and tool versions are saved with every run.
 
-## 5. Scaling
+## 5. Structural conservation coverage
+
+`structural_conservation.pair_threshold` is passed to FoldMason `msa2lddtjson`. The default
+`0.5` requires at least half of structure-pair subalignments to provide LDDT information for an
+MSA column. Columns below that support level are retained in the CSV with a missing
+`structural_lddt` value and displayed in grey. This prevents a residue present in only one or a
+few structures from appearing strongly conserved.
+
+This threshold is separate from F-family reciprocal coverage and from D-family local-alignment
+coverage.
+
+## 6. Scaling
 
 For one strain or approximately 1,500 proteins, exhaustive all-vs-all search is reasonable.
 For tens of thousands of proteins, use a separate discovery workflow based on Foldseek

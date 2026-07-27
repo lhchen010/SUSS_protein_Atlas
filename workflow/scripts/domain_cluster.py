@@ -6,7 +6,7 @@ import igraph as ig
 import leidenalg
 import pandas as pd
 
-from v3_utils import domain_segments
+from v3_utils import aggregate_domain_bridges, domain_segments
 
 
 columns = [
@@ -59,19 +59,22 @@ if len(segments):
     labels = {community: f"D{index}" for index, community in enumerate(ranked.index)}
     segments["domain_family"] = segments.community.map(labels)
     segments = segments[segments.domain_family.notna()].copy()
-    edges = edges[
+    all_retained_edges = edges[
         edges.source.isin(set(segments.segment_id))
         & edges.target.isin(set(segments.segment_id))
     ].copy()
     segment_family = dict(zip(segments.segment_id, segments.domain_family))
-    edges["domain_family"] = edges.source.map(segment_family)
-    edges = edges[
-        edges.domain_family == edges.target.map(segment_family)
+    bridges = aggregate_domain_bridges(all_retained_edges, segment_family)
+    all_retained_edges["domain_family"] = all_retained_edges.source.map(segment_family)
+    edges = all_retained_edges[
+        all_retained_edges.domain_family
+        == all_retained_edges.target.map(segment_family)
     ].copy()
 else:
     segments["community"] = pd.Series(dtype=int)
     segments["domain_family"] = pd.Series(dtype=str)
     edges["domain_family"] = pd.Series(dtype=str)
+    bridges = aggregate_domain_bridges(edges, {})
 
 families = []
 for family, group in segments.groupby("domain_family"):
@@ -106,6 +109,7 @@ for output in (
     snakemake.output.families,
     snakemake.output.members,
     snakemake.output.edges,
+    snakemake.output.bridges,
 ):
     os.makedirs(os.path.dirname(output), exist_ok=True)
 families.to_csv(snakemake.output.families, index=False)
@@ -113,7 +117,9 @@ segments[
     ["domain_family", "segment_id", "acc", "start", "end", "length", "community"]
 ].to_csv(snakemake.output.members, index=False)
 edges.to_csv(snakemake.output.edges, index=False)
+bridges.to_csv(snakemake.output.bridges, index=False)
 print(
     f"domain families: {len(families)} families, {len(segments)} segments, "
-    f"{segments.acc.nunique() if len(segments) else 0} proteins"
+    f"{segments.acc.nunique() if len(segments) else 0} proteins, "
+    f"{len(bridges)} cross-family bridges"
 )

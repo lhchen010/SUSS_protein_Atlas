@@ -30,6 +30,7 @@ independent singleton records with complete single-protein evidence.
 | How is structure independently checked? | Within-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | Which alignments are used? | FoldMason AA/3Di structural MSA for fold correspondence; MAFFT sequence MSA for eligible S subgroups |
 | When is Rate4Site used? | Only when the representative protein belongs to a sufficiently large sequence-homologous subgroup |
+| How is structural conservation scored? | Official FoldMason per-column LDDT; columns lacking the configured pair support remain unscored |
 | What biological evidence is integrated? | Structural conservation, Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, sequence tree, annotation, and optional RNA-seq |
 | How are singletons handled? | As independent proteins with sequence viewer/download, structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
 | What is delivered? | Interactive HTML with F/D/singleton workspaces, a searchable Foldseek database, Excel summaries, machine-readable tables, and provenance |
@@ -101,10 +102,11 @@ for workflow development:
 
 | Output | Purpose |
 |---|---|
-| `results/<atlas_name>.html` | Interactive full-length family network, domain-family table, singleton workbench, and integrated evidence panels |
+| `results/<atlas_name>.html` | Interactive full-length and domain-family networks, domain-segment workbench, singleton workbench, and integrated evidence panels |
 | `results/family_summary.xlsx` | Clustered families and singletons with members, evidence, TM statistics, SUSS labels, pockets, and expression |
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/domain_families.csv` / `domain_members.csv` | Local structural-domain family summaries and protein segment coordinates |
+| `results/domain_edges.csv` / `domain_cross_edges.csv` | Segment-level local Foldseek evidence and aggregated structural bridges between D families |
 | `results/sequence_subgroups.csv` | Sequence-homologous subgroups nested within full-length structural families |
 | `results/structure_db/atlas*` | Foldseek database used by the portal structure-search endpoint |
 | `results/structure_search_index.csv` | Protein-to-F/D/S/singleton lookup table for structure-search results |
@@ -119,23 +121,29 @@ for workflow development:
 The atlas has three primary views:
 
 - **Full-length families** searches and highlights global fold-defined `F` families.
-- **Domain families** lists local segment-defined `D` families and links every matched segment
-  back to its full-length family or singleton record.
+- **Domain families** provides a D-family overview network. Edges summarize retained local
+  Foldseek hits that bridge two D communities. Opening a D family reveals its segment-level
+  similarity network, local Foldseek lDDT/probability/alignment evidence, the matched region in
+  full-structure context, coordinate-overlapping Pfam/InterPro calls, and protein-level
+  annotation, pocket, EffectorP, DeepTMHMM, Foldseek database-hit, and RNA-seq evidence.
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
   pockets, and transmembrane helices. Selecting a row opens structure, pocket, ESM, RNA-seq, and
   direct annotation evidence for that protein.
 
 Every F family exposes mature sequences, a FoldMason AA structural MSA, the corresponding 3Di
 MSA, and, when applicable, a MAFFT sequence MSA for the representative protein's S subgroup.
-Structural conservation is derived from FoldMason correspondence. Evolutionary conservation is
-reported separately and remains unavailable when Rate4Site lacks a sufficiently large homologous
-subgroup. A singleton exposes its one mature sequence; pairwise family analyses are omitted.
+Structural conservation uses FoldMason's official per-column LDDT output. By default, a column is
+colored only when at least half of structure-pair subalignments support it; unsupported residues
+are grey rather than being interpreted as variable or conserved. Red is high structural
+conservation and blue is low structural conservation. Evolutionary conservation is reported
+separately and remains unavailable when Rate4Site lacks a sufficiently large homologous subgroup.
+A singleton exposes its one mature sequence; pairwise family analyses are omitted.
 
 The portal also accepts a PDB or mmCIF query after a run completes. It searches that run's
 Foldseek database and maps each hit directly to its F family or singleton, D-family memberships,
 and S subgroup.
 
-Both views search locally without a server round trip. Plain text matches accessions, annotations,
+All three views search locally without a server round trip. Plain text matches accessions, annotations,
 InterPro/Pfam terms, Foldseek PDB100 and AFDB/Swiss-Prot hits, EffectorP calls, DeepTMHMM results,
 novelty, pockets, and expression. Field prefixes are available for precise queries:
 
