@@ -1,13 +1,15 @@
-"""Rule 3 — cluster (CHECKPOINT). Foldseek all-vs-all -> symmetric TM -> Leiden.
+"""Rule 3 — cluster (CHECKPOINT). Foldseek all-vs-all -> filtered edges -> Leiden.
 Writes families.csv, members.csv, edges.csv, and one <fam>.members.txt per family
 into famdir (this is what the checkpoint-aware DAG globs to expand per-family rules).
-Config: foldseek_tm, tm_symmetric, leiden_resolution, leiden_seed, min_family_size.
+Config: foldseek_tm, whole_fold_min_coverage, tm_symmetric, leiden_resolution,
+leiden_seed, min_family_size.
 """
 import os
 import numpy as np
 import pandas as pd
 import igraph as ig
 import leidenalg
+from v3_utils import whole_fold_edges
 
 tsv      = snakemake.input.tsv
 qc_csv   = snakemake.input.qc
@@ -16,6 +18,7 @@ out_mem  = snakemake.output.members
 out_edge = snakemake.output.edges
 famdir   = snakemake.output.famdir
 TM_THR   = float(snakemake.params.tm)
+COV_THR  = float(snakemake.params.coverage)
 SYM      = snakemake.params.sym
 RES      = float(snakemake.params.res)
 SEED     = int(snakemake.params.seed)
@@ -33,16 +36,12 @@ def norm(s):
     if m: return m.group(0)
     parts = s.split("_")
     return parts[1] if len(parts) == 2 else parts[0]
-df["q"] = df["query"].map(norm); df["t"] = df["target"].map(norm)
-if SYM == "min":   df["tm"] = df[["qtmscore","ttmscore"]].min(axis=1)
-elif SYM == "max": df["tm"] = df[["qtmscore","ttmscore"]].max(axis=1)
-else:              df["tm"] = df[["qtmscore","ttmscore"]].mean(axis=1)
-off = df[df.q != df.t]
-
-edges = off[off.tm >= TM_THR][["q","t","tm","fident"]].copy()
-edges["pair"] = edges.apply(lambda r: tuple(sorted((r.q, r.t))), axis=1)
-edges = edges.groupby("pair", as_index=False).agg(tm=("tm","max"), fident=("fident","max"))
-edges[["q","t"]] = pd.DataFrame(edges.pair.tolist(), index=edges.index)
+edges = whole_fold_edges(
+    df,
+    tm_threshold=TM_THR,
+    coverage_threshold=COV_THR,
+    symmetry=SYM,
+)
 
 qc = pd.read_csv(qc_csv)
 qc = qc[qc["pass"]] if "pass" in qc.columns else qc
@@ -82,7 +81,7 @@ os.makedirs(os.path.dirname(out_fam), exist_ok=True)
 os.makedirs(famdir, exist_ok=True)
 fam.to_csv(out_fam, index=False)
 comm[["acc","family","community","deg","plddt","length"]].to_csv(out_mem, index=False)
-keep[["q","t","tm","fident"]].to_csv(out_edge, index=False)
+keep.to_csv(out_edge, index=False)
 
 # per-family member-file (paths to PDBs) for downstream per-family rules.
 # HUB = member with highest mean within-family TM ("most like everyone"); written FIRST
@@ -110,4 +109,5 @@ for fid in fam_sizes.index:
             fh.write(os.path.join(pdb_dir, fn) + "\n")
 print(f"clustered: {len(fam)} families (min_size={MIN_SIZE}), "
       f"{int(fam.n_members.sum())} proteins in families, "
-      f"{(comm.family=='singleton').sum()} singletons; edges={len(keep)} (TM>={TM_THR})")
+      f"{(comm.family=='singleton').sum()} singletons; edges={len(keep)} "
+      f"(TM>={TM_THR}, reciprocal coverage>={COV_THR})")

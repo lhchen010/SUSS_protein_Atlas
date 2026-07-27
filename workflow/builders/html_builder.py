@@ -634,7 +634,9 @@ def _newick_to_svg(nwk, hub=None):
 
 def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
               pocket_entry, pocket_raw, trees, tree_status, fit_stats,
-              analysis_kind="family"):
+              analysis_kind="family", sequence_msa=None, structural_msa=None,
+              three_di_msa=None, sequence_status=None, domains=None,
+              subgroups=None, structural_cons=None):
     """Build the complete, auditable per-family analysis workbook."""
     try:
         buf = io.BytesIO()
@@ -653,6 +655,28 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
                 blast_pairs.to_excel(xl, sheet_name="blast_pairs", index=False)
             if sig is not None:
                 sig.to_excel(xl, sheet_name="per_site", index=False)
+            if structural_cons is not None:
+                structural_cons.to_excel(
+                    xl, sheet_name="structural_conservation", index=False
+                )
+            for sheet_name, records in (
+                ("sequence_MSA", sequence_msa),
+                ("structural_MSA_AA", structural_msa),
+                ("structural_MSA_3Di", three_di_msa),
+            ):
+                if records:
+                    pd.DataFrame(
+                        [{"member": member, "aligned_sequence": sequence}
+                         for member, sequence in records.items()]
+                    ).to_excel(xl, sheet_name=sheet_name, index=False)
+            if sequence_status:
+                pd.DataFrame([sequence_status]).to_excel(
+                    xl, sheet_name="sequence_analysis", index=False
+                )
+            if domains is not None and len(domains):
+                domains.to_excel(xl, sheet_name="domain_families", index=False)
+            if subgroups is not None and len(subgroups):
+                subgroups.to_excel(xl, sheet_name="sequence_subgroups", index=False)
             if exp is not None:
                 exp.to_excel(xl, sheet_name="RNAseq", index=False)
 
@@ -723,6 +747,13 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
                 ("p2rank_pockets", "Complete detector-native P2Rank predictions table with all original columns."),
                 ("RNAseq", "Per-member, replicate-collapsed RNA-seq expression for this family."),
                 ("per_site", "Reference-residue conservation, SASA, pocket, and other site-level evidence."),
+                ("structural_conservation", "FoldMason-column occupancy, AA/3Di entropy, and hub-relative structural LDDT."),
+                ("sequence_MSA", "MAFFT alignment of the reference protein's sequence-homologous subgroup."),
+                ("structural_MSA_AA", "FoldMason structure-guided amino-acid alignment."),
+                ("structural_MSA_3Di", "FoldMason alignment represented in the 3Di structural alphabet."),
+                ("sequence_analysis", "Applicability and tool status for MAFFT, sequence tree, and Rate4Site."),
+                ("domain_families", "Local 3Di+AA domain-family segments overlapping this family."),
+                ("sequence_subgroups", "Sequence-homologous subgroups within the structural family."),
             ]
             if analysis_kind == "family":
                 readme_rows.extend([
@@ -766,6 +797,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
 
     members_all = load_csv(os.path.join(results_dir, "members.csv"))
     expression_all = load_csv(os.path.join(results_dir, "rnaseq_expression.csv"))
+    sequence_subgroups_all = load_csv(
+        os.path.join(results_dir, "sequence_subgroups.csv")
+    )
+    domain_members_all = load_csv(os.path.join(results_dir, "domain_members.csv"))
+    domain_families_all = load_csv(os.path.join(results_dir, "domain_families.csv"))
 
     def structure_text(accession, family_dir=None):
         candidates = []
@@ -867,6 +903,18 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         if exp is not None:
             assets["rna_svg"] = _svg_datauri(_svg_heat(exp.set_index(exp.columns[0]), f"{fam} · RNAseq"))
         sig = load_csv(os.path.join(fd, f"{fam}_signature.csv"))
+        structural_cons = load_csv(
+            os.path.join(fd, f"{fam}_structural_conservation.csv")
+        )
+        sequence_status = {}
+        sequence_status_path = os.path.join(
+            fd, f"{fam}_sequence_analysis_status.json"
+        )
+        if os.path.exists(sequence_status_path):
+            try:
+                sequence_status = json.load(open(sequence_status_path))
+            except Exception:
+                sequence_status = {}
         # hub = highest mean-TM member (mark on FoldTree); ref_used = first member (analysis ref)
         tm_labels = list(tm.iloc[:, 0].astype(str)) if tm is not None else members
         hub, hub_meanTM = _hub_from_tm(tm, tm_labels) if tm is not None else (members[0] if members else None, None)
@@ -908,6 +956,42 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             hub_meanTM=hub_meanTM,
             foldtree_status=tree_status,
             foldtree_rooting_label=rooting_label,
+            sequence_analysis_status=sequence_status,
+        )
+        if structural_cons is not None and "structural_lddt" in structural_cons:
+            values = structural_cons.structural_lddt.dropna()
+            if len(values):
+                ex["structural_lddt_min"] = float(values.min())
+                ex["structural_lddt_max"] = float(values.max())
+                ex["structural_lddt_mean"] = float(values.mean())
+        family_subgroups = (
+            sequence_subgroups_all[
+                sequence_subgroups_all.family.astype(str) == str(fam)
+            ].copy()
+            if sequence_subgroups_all is not None
+            else pd.DataFrame()
+        )
+        family_domains = (
+            domain_members_all[
+                domain_members_all.acc.astype(str).isin(set(members))
+            ].copy()
+            if domain_members_all is not None
+            else pd.DataFrame()
+        )
+        ex["n_sequence_subgroups"] = (
+            int(family_subgroups.sequence_subgroup.nunique())
+            if len(family_subgroups)
+            else 0
+        )
+        ex["n_domain_families"] = (
+            int(family_domains.domain_family.nunique())
+            if len(family_domains)
+            else 0
+        )
+        ex["domain_families"] = (
+            sorted(family_domains.domain_family.dropna().astype(str).unique())
+            if len(family_domains)
+            else []
         )
         # US-align (independent-algorithm) TM cross-check summary for this family
         if tm_us_mean is not None:
@@ -918,7 +1002,9 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         if sig is not None and "conservation" in sig:
             cons = sig["conservation"].dropna()
             sub = sig.dropna(subset=["rel_sasa", "conservation"]) if {"rel_sasa","conservation"}.issubset(sig.columns) else sig.iloc[0:0]
-            ex["cons_min"] = float(cons.min()); ex["cons_max"] = float(cons.max())
+            if len(cons):
+                ex["cons_min"] = float(cons.min())
+                ex["cons_max"] = float(cons.max())
             ex["cons_sasa_r"] = float(np.corrcoef(sub.conservation, sub.rel_sasa)[0, 1]) if len(sub) > 2 else None
         # pockets: prefer P2Rank, keep both sources so the viewer can switch (add_p2rank_esmscan).
         # CRITICAL: the renderer's buildStructPane reads ex.fpocket_resi.length /
@@ -992,6 +1078,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         cons_pdb = os.path.join(fd, f"{fam}_conservation.pdb")
         if os.path.exists(cons_pdb):
             REFPDB[f"{fam}_cons"] = open(cons_pdb, encoding="utf-8", errors="replace").read()
+        structural_pdb = os.path.join(fd, f"{fam}_structural_conservation.pdb")
+        if os.path.exists(structural_pdb):
+            REFPDB[f"{fam}_struct"] = open(
+                structural_pdb, encoding="utf-8", errors="replace"
+            ).read()
         # structures (single mode embeds; backend mode omits)
         struct = {}
         if mode == "single":
@@ -1003,6 +1094,24 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         msa = _records_by_member(
             _read_fasta_records(os.path.join(fd, f"{fam}.aln")), members
         )
+        three_di_msa = _records_by_member(
+            _read_fasta_records(os.path.join(fd, f"{fam}.fasta")), members
+        )
+        sequence_msa = _records_by_member(
+            _read_fasta_records(os.path.join(fd, f"{fam}_sequence_msa.fasta")),
+            members,
+        )
+        sequence_tree_path = os.path.join(fd, f"{fam}_sequence_tree.nwk")
+        sequence_tree = (
+            open(sequence_tree_path, encoding="utf-8", errors="replace").read().strip()
+            if os.path.exists(sequence_tree_path)
+            else ""
+        )
+        if sequence_tree:
+            trees["sequence"] = sequence_tree
+            assets["sequence_tree_svg"] = _svg_datauri(
+                _newick_to_svg(sequence_tree, hub=hub)
+            )
         # FoldMason-aware rigid-body alignment to the canonical hub. Compact transforms
         # are embedded once and applied by the viewer and superposed-PDB downloader.
         transforms = {}
@@ -1042,7 +1151,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                         if len(anno) and "family" in anno.columns else None),
             tm=tm, usm=usm, idm=idm, blast_pairs=blast_pairs, sig=sig, exp=exp, pocket_entry=pk,
             pocket_raw=_pocket_raw_tables(results_dir, fam, pk), trees=trees,
-            tree_status=tree_status, fit_stats=fit_stats)
+            tree_status=tree_status, fit_stats=fit_stats,
+            sequence_msa=sequence_msa, structural_msa=msa,
+            three_di_msa=three_di_msa, sequence_status=sequence_status,
+            domains=family_domains, subgroups=family_subgroups,
+            structural_cons=structural_cons)
         # ESM-tolerance-colored ref PDB: the renderer's "ESM" structure mode reads
         # REFPDB["<fam>_esm"]; without it, clicking the ESM button feeds addModel(undefined)
         # and blanks the viewer. Build it from the ESM ref's embedded structure + per-site
@@ -1072,8 +1185,12 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             if s:
                 seq[a] = s
         PAY[fam] = dict(members=members, order=members, struct=struct, transforms=transforms,
-                        seq=seq, msa=msa, assets=assets,
-                        newick=newick, maxid=float(r.get("max_identity", 0) or 0))
+                        seq=seq, msa=msa, structural_msa=msa,
+                        three_di_msa=three_di_msa, sequence_msa=sequence_msa,
+                        assets=assets, newick=newick, sequence_newick=sequence_tree,
+                        domains=family_domains.to_dict("records") if len(family_domains) else [],
+                        subgroups=family_subgroups.to_dict("records") if len(family_subgroups) else [],
+                        maxid=float(r.get("max_identity", 0) or 0))
         if len(anno):
             payload = _annotation_payload(anno[anno.family == fam])
             if payload:
@@ -1306,6 +1423,14 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     D = dict(
         NET=dict(nodes=NET_nodes, edges=NET_edges),
         SINGLETONS=SINGLETONS,
+        DOMAIN_FAMILIES=(
+            domain_families_all.to_dict("records")
+            if domain_families_all is not None else []
+        ),
+        DOMAIN_MEMBERS=(
+            domain_members_all.to_dict("records")
+            if domain_members_all is not None else []
+        ),
         EXTRA=EXTRA,
         REFPDB=REFPDB,
         PAY=PAY,

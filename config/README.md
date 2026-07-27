@@ -26,6 +26,15 @@ the actual method and recovery status in `<family>_foldtree_status.json`.
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).
 
-Lab-standard analysis defaults (Foldseek TM ≥ 0.5, Leiden resolution 1.0, min family size 2,
-BLAST e-value) live in the `clustering:` / `classification:` blocks and normally don't change —
-they define what counts as "structurally similar" and how the SUSS divergence spectrum is labelled.
+Version 3 has three separate relationship layers:
+
+- `clustering:` defines full-length `F` families using global Foldseek TM score and reciprocal
+  structural coverage.
+- `domain_clustering:` defines local structural-domain `D` families using Foldseek 3Di+AA
+  segment hits.
+- `classification:` defines sequence-homologous `S` subgroups and the SUSS divergence labels
+  using BLAST e-value plus reciprocal sequence coverage.
+
+See [Foldseek parameters](../docs/FOLDSEEK_PARAMETERS.md) before changing these thresholds.
+The defaults are a starting point, not a replacement for reporting the effective parameters in a
+paper.

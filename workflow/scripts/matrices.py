@@ -38,7 +38,7 @@ for m in members:
 # --- identity from blastp (pident, 0-100 -> 0-1) ---
 ID = pd.DataFrame(0.0, index=members, columns=members)
 if os.path.exists(bl_tsv) and os.path.getsize(bl_tsv) > 0:
-    bc = ["q","t","pident","length","evalue","bitscore","qcovs"]
+    bc = ["q","t","pident","length","evalue","bitscore","qlen","slen"]
     bl = pd.read_csv(bl_tsv, sep="\t", names=bc)
     bl["qa"] = bl.q.map(acc_of); bl["ta"] = bl.t.map(acc_of)
     bl = bl[bl.qa.isin(mset) & bl.ta.isin(mset)]

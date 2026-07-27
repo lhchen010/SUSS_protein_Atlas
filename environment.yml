@@ -21,6 +21,8 @@ dependencies:
   # --- structural / sequence tools (bioconda; macOS + Linux) ---
   - foldseek
   - foldmason
+  - mafft
+  - fasttree
   - rate4site
   - blast          # provides blastp + makeblastdb
   - fpocket

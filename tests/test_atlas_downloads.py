@@ -394,8 +394,29 @@ def test_sequence_viewer_and_alignment_downloads_are_exposed_without_singleton_m
     assert "function dlMsa" in renderer
     assert "function buildSequencePane" in renderer
     assert "function renderSequenceViewer" in renderer
-    assert "FoldMason structure-guided alignment" in renderer
+    assert "Sequence MSA" in renderer
+    assert "Structural MSA (AA)" in renderer
+    assert "Structural MSA (3Di)" in renderer
+    assert "function dlAlignment" in renderer
+    assert "MAFFT_sequence_MSA" in renderer
+    assert "FoldMason_AA_MSA" in renderer
     assert "singletonTab(3)" in renderer
-    assert "not applicable to a singleton" in renderer
+    assert "not applicable to a singleton" in renderer.lower()
     assert ".sequence-view" in prefix
-    assert "seq=seq, msa=msa" in builder
+    assert "sequence_msa=sequence_msa" in builder
+    assert "structural_msa=msa" in builder
+
+
+def test_domain_family_mode_and_structure_search_are_exposed():
+    prefix = (ROOT / "workflow" / "builders" / "template" / "prefix.html").read_text()
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+    portal = (ROOT / "portal" / "suss_portal.py").read_text()
+
+    assert 'id="modedomains"' in prefix
+    assert 'id="domains"' in prefix
+    assert "function renderDomainTable" in renderer
+    assert "function showDomain" in renderer
+    assert "DOMAIN_FAMILIES" in renderer
+    assert "action=/search-structure" in portal
+    assert "structure_search_index.csv" in portal
+    assert "Domain-aware Foldseek" in portal
