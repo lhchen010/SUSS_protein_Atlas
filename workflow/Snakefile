@@ -113,7 +113,8 @@ rule domain_cluster:
     output:
         families=f"{RESULTS}/domain_families.csv",
         members=f"{RESULTS}/domain_members.csv",
-        edges=f"{RESULTS}/domain_edges.csv"
+        edges=f"{RESULTS}/domain_edges.csv",
+        bridges=f"{RESULTS}/domain_cross_edges.csv"
     params:
         evalue=config.get("domain_clustering", {}).get("evalue", 0.001),
         probability=config.get("domain_clustering", {}).get("min_probability", 0.5),
@@ -231,6 +232,12 @@ rule structural_conservation:
     output:
         csv=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.csv",
         pdb=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.pdb"
+    params:
+        foldmason=TOOLS["foldmason"],
+        pair_threshold=config.get("structural_conservation", {}).get(
+            "pair_threshold", 0.5
+        )
+    threads: 4
     script: "scripts/structural_conservation.py"
 
 rule sequence_analysis:
@@ -424,6 +431,8 @@ rule assemble:
             cross=f"{RESULTS}/cross_family_edges.csv",
             domains=f"{RESULTS}/domain_members.csv",
             domain_families=f"{RESULTS}/domain_families.csv",
+            domain_edges=f"{RESULTS}/domain_edges.csv",
+            domain_bridges=f"{RESULTS}/domain_cross_edges.csv",
             subgroups=f"{RESULTS}/sequence_subgroups.csv",
             structure_db=f"{RESULTS}/structure_db/atlas.complete.json",
             structure_index=f"{RESULTS}/structure_search_index.csv"

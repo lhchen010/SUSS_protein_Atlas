@@ -262,7 +262,7 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
         "foldseek_pdb_status": "complete", "foldseek_afdb_status": "complete",
         "pdb_hit": "4XYZ", "pdb_tm": 0.63, "afdbsp_hit": "AF-Q9TEST-F1",
         "afdbsp_name": "Secreted test protein", "afdbsp_tm": 0.71,
-        "pfam_domains": "PF12345", "interpro_entries": "IPR012345",
+        "pfam_domains": "PF12345(1-3)", "interpro_entries": "IPR012345(1-2)",
         "effectorp": "effector", "n_TMR": 0, "novel": False,
     }]).to_csv(results / "annotation.csv", index=False)
     pd.DataFrame([{
@@ -276,6 +276,23 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
         '{"PROT1":{"ref":"PROT1","fpocket":{"top_score":2.4,'
         '"n_pockets":1,"lining_residues":[2]}}}'
     )
+    pd.DataFrame([{
+        "domain_family": "D0", "n_segments": 1, "n_proteins": 1,
+        "n_edges": 0, "mean_probability": 0.9, "mean_lddt": 0.7,
+        "mean_aligned_residues": 3,
+    }]).to_csv(results / "domain_families.csv", index=False)
+    pd.DataFrame([{
+        "domain_family": "D0", "segment_id": "PROT1:1-3", "acc": "PROT1",
+        "start": 1, "end": 3, "length": 3, "community": 0,
+    }]).to_csv(results / "domain_members.csv", index=False)
+    pd.DataFrame(columns=[
+        "domain_family", "source", "target", "evalue", "prob", "bits",
+        "lddt", "fident", "alnlen", "shorter_coverage",
+    ]).to_csv(results / "domain_edges.csv", index=False)
+    pd.DataFrame(columns=[
+        "source_family", "target_family", "n_edges", "mean_probability",
+        "max_probability", "mean_lddt", "max_lddt", "mean_aligned_residues",
+    ]).to_csv(results / "domain_cross_edges.csv", index=False)
     out_html = results / "atlas.html"
 
     built = html_builder.build_atlas(
@@ -306,6 +323,10 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     assert '"REFPDB": {}' in html
     assert '"msa": {}' in html
     assert '"structures_zip_b64":' not in html
+    assert '"DNET": {"nodes": [{"domain_family": "D0"' in html
+    assert '"segment_id": "PROT1:1-3"' in html
+    assert '"label": "PF12345"' in html
+    assert '"pocket_residues": [2]' in html
     assert html.count("ATOM      1") == 1
 
 
@@ -416,7 +437,36 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert 'id="domains"' in prefix
     assert "function renderDomainTable" in renderer
     assert "function showDomain" in renderer
+    assert renderer.count("function showDomain(id)") == 1
+    assert "function showDomainSegment" in renderer
+    assert "function renderDomainStructure" in renderer
+    assert "DOMAIN_EDGES" in renderer
+    assert "DNET.edges" in renderer
     assert "DOMAIN_FAMILIES" in renderer
     assert "action=/search-structure" in portal
     assert "structure_search_index.csv" in portal
     assert "Domain-aware Foldseek" in portal
+
+
+def test_structural_color_direction_and_missing_coverage_are_explicit():
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+
+    assert 'min:100,max:0' in renderer
+    assert 'min:qmax,max:qmin' in renderer
+    assert 'min:d.esm_max,max:d.esm_min' in renderer
+    assert "structural_scored_resi" in renderer
+    assert "insufficient pair coverage" in renderer
+
+
+def test_domain_annotations_require_coordinate_overlap():
+    row = pd.Series({
+        "pfam_domains": "Thioredoxin(12-99) | Remote domain(150-220)",
+        "interpro_entries": "IPR000001(20-80)",
+    })
+
+    overlaps = html_builder._overlapping_annotations(row, 2, 127)
+
+    assert {item["label"] for item in overlaps} == {
+        "Thioredoxin", "IPR000001"
+    }
+    assert all(item["overlap"] > 0 for item in overlaps)

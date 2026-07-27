@@ -44,6 +44,9 @@ domain_clustering:
   leiden_seed: 42
   min_family_size: 2
 
+structural_conservation:
+  pair_threshold: 0.5             # score a column only when >=50% of structure pairs support it
+
 classification:
   blast_evalue: 0.001             # labels the SUSS divergence spectrum (NOT used to split families).
   min_reciprocal_coverage: 0.5    # both proteins need this HSP coverage to count as detected

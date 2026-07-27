@@ -32,6 +32,8 @@ Version 3 has three separate relationship layers:
   structural coverage.
 - `domain_clustering:` defines local structural-domain `D` families using Foldseek 3Di+AA
   segment hits.
+- `structural_conservation.pair_threshold:` controls the minimum fraction of FoldMason
+  structure-pair subalignments that must support a column before it is colored (default `0.5`).
 - `classification:` defines sequence-homologous `S` subgroups and the SUSS divergence labels
   using BLAST e-value plus reciprocal sequence coverage.
 

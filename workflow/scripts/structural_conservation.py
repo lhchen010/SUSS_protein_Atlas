@@ -1,12 +1,23 @@
-"""Map FoldMason AA/3Di columns to hub residues and quantify structural variation."""
+"""Map official FoldMason per-column LDDT scores to the hub structure."""
 
+import json
 import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from v3_utils import fasta_records, protein_id, shannon
+from runtime_utils import resolve_executable
+from v3_utils import (
+    fasta_records,
+    foldmason_column_scores,
+    protein_id,
+    shannon,
+    write_fasta,
+)
 
 
 def ca_atoms(path: str | Path) -> tuple[list[int], np.ndarray]:
@@ -44,53 +55,45 @@ alignment_length = len(aa_alignment[hub])
 if any(len(aa_alignment[member]) != alignment_length for member in members):
     raise RuntimeError(f"{family}: FoldMason AA alignment has inconsistent lengths")
 
-residue_numbers = {}
-coordinates = {}
-column_to_index = {}
-for member in members:
-    numbers, coords = ca_atoms(path_by_acc[member])
-    residue_numbers[member] = numbers
-    coordinates[member] = coords
-    mapping = {}
-    sequence_index = 0
-    for column, symbol in enumerate(aa_alignment[member]):
-        if symbol not in {"-", "."}:
-            if sequence_index < len(coords):
-                mapping[column] = sequence_index
-            sequence_index += 1
-    column_to_index[member] = mapping
-
-hub_numbers = residue_numbers[hub]
-hub_coords = coordinates[hub]
-hub_mapping = column_to_index[hub]
-per_column_scores: dict[int, list[float]] = {
-    column: [] for column in hub_mapping
-}
-thresholds = np.asarray([0.5, 1.0, 2.0, 4.0])
-
-for member in members:
-    if member == hub:
-        continue
-    shared_columns = sorted(set(hub_mapping) & set(column_to_index[member]))
-    if len(shared_columns) < 3:
-        continue
-    hub_indices = np.asarray([hub_mapping[column] for column in shared_columns])
-    member_indices = np.asarray(
-        [column_to_index[member][column] for column in shared_columns]
+foldmason = resolve_executable(snakemake.params.foldmason, "FoldMason")
+pair_threshold = float(snakemake.params.pair_threshold)
+with tempfile.TemporaryDirectory(prefix=f"{family}_lddt_") as tmp:
+    tmp_path = Path(tmp)
+    structure_dir = tmp_path / "structures"
+    structure_dir.mkdir()
+    for member in members:
+        shutil.copy2(path_by_acc[member], structure_dir / f"{member}.pdb")
+    normalized_msa = tmp_path / "alignment.fasta"
+    write_fasta({member: aa_alignment[member] for member in members}, normalized_msa)
+    database = tmp_path / "structures_db"
+    output_json = tmp_path / "column_lddt.json"
+    subprocess.run(
+        [foldmason, "createdb", str(structure_dir), str(database), "--threads", "1"],
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    hc = hub_coords[hub_indices]
-    mc = coordinates[member][member_indices]
-    hub_dist = np.linalg.norm(hc[:, None, :] - hc[None, :, :], axis=2)
-    member_dist = np.linalg.norm(mc[:, None, :] - mc[None, :, :], axis=2)
-    delta = np.abs(hub_dist - member_dist)
-    for local_index, column in enumerate(shared_columns):
-        neighbors = (hub_dist[local_index] > 0) & (hub_dist[local_index] < 15.0)
-        if not neighbors.any():
-            continue
-        differences = delta[local_index, neighbors]
-        score = float((differences[:, None] < thresholds[None, :]).mean())
-        per_column_scores[column].append(score)
+    subprocess.run(
+        [
+            foldmason,
+            "msa2lddtjson",
+            str(database),
+            str(normalized_msa),
+            str(output_json),
+            "--pair-threshold",
+            str(pair_threshold),
+            "--threads",
+            str(max(1, int(snakemake.threads))),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    column_scores = foldmason_column_scores(
+        json.loads(output_json.read_text(encoding="utf-8")), alignment_length
+    )
 
+hub_numbers, _ = ca_atoms(path_by_acc[hub])
 rows = []
 hub_residue_index = 0
 for column, hub_symbol in enumerate(aa_alignment[hub]):
@@ -105,7 +108,7 @@ for column, hub_symbol in enumerate(aa_alignment[hub]):
         if len(di_alignment.get(member, "")) > column
     ]
     present = sum(value not in {"-", "."} for value in aa_values)
-    scores = per_column_scores.get(column, [])
+    score = column_scores[column]
     rows.append(
         {
             "family": family,
@@ -116,8 +119,10 @@ for column, hub_symbol in enumerate(aa_alignment[hub]):
             "occupancy": present / len(members) if members else np.nan,
             "aa_entropy": shannon(aa_values),
             "three_di_entropy": shannon(di_values),
-            "structural_lddt": float(np.mean(scores)) if scores else np.nan,
-            "n_structural_comparisons": len(scores),
+            "structural_lddt": score,
+            "n_structural_members": present,
+            "pair_threshold": pair_threshold,
+            "scoring_method": "FoldMason msa2lddtjson",
         }
     )
     hub_residue_index += 1
@@ -144,6 +149,7 @@ for line in Path(path_by_acc[hub]).read_text(
         output_lines.append(line)
 Path(snakemake.output.pdb).write_text("".join(output_lines), encoding="utf-8")
 print(
-    f"{family} structural conservation: ref={hub}, columns={len(result)}, "
-    f"scored={(result.structural_lddt.notna()).sum()}"
+    f"{family} FoldMason structural conservation: ref={hub}, columns={len(result)}, "
+    f"scored={(result.structural_lddt.notna()).sum()}, "
+    f"pair_threshold={pair_threshold}"
 )

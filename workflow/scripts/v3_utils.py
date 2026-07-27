@@ -6,6 +6,7 @@ import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -172,7 +173,9 @@ def domain_segments(
         "fident",
     ):
         data[column] = pd.to_numeric(data[column], errors="coerce")
-    data["shorter_coverage"] = data.alnlen / data[["qlen", "tlen"]].min(axis=1)
+    data["shorter_coverage"] = (
+        data.alnlen / data[["qlen", "tlen"]].min(axis=1)
+    ).clip(upper=1.0)
     data = data[
         (data.evalue <= float(evalue_threshold))
         & (data.prob >= float(probability_threshold))
@@ -263,6 +266,72 @@ def domain_segments(
     ]
 
 
+def aggregate_domain_bridges(
+    edges: pd.DataFrame, segment_family: dict[str, str]
+) -> pd.DataFrame:
+    """Aggregate local Foldseek edges that connect two different D families."""
+    columns = [
+        "source_family",
+        "target_family",
+        "n_edges",
+        "mean_probability",
+        "max_probability",
+        "mean_lddt",
+        "max_lddt",
+        "mean_aligned_residues",
+    ]
+    if edges.empty:
+        return pd.DataFrame(columns=columns)
+    data = edges.copy()
+    data["source_family"] = data.source.map(segment_family)
+    data["target_family"] = data.target.map(segment_family)
+    data = data[
+        data.source_family.notna()
+        & data.target_family.notna()
+        & (data.source_family != data.target_family)
+    ].copy()
+    if data.empty:
+        return pd.DataFrame(columns=columns)
+    ordered = [
+        tuple(sorted((source, target)))
+        for source, target in zip(data.source_family, data.target_family)
+    ]
+    data[["source_family", "target_family"]] = pd.DataFrame(
+        ordered, index=data.index
+    )
+    grouped = data.groupby(["source_family", "target_family"], as_index=False)
+    result = grouped.agg(
+        n_edges=("source", "size"),
+        mean_probability=("prob", "mean"),
+        max_probability=("prob", "max"),
+        mean_lddt=("lddt", "mean"),
+        max_lddt=("lddt", "max"),
+        mean_aligned_residues=("alnlen", "mean"),
+    )
+    return result[columns].sort_values(
+        ["n_edges", "mean_lddt"], ascending=[False, False]
+    )
+
+
+def foldmason_column_scores(payload: dict[str, Any], length: int) -> list[float]:
+    """Validate and normalize FoldMason msa2lddtjson column scores."""
+    raw = payload.get("scores")
+    if not isinstance(raw, list):
+        raise ValueError("FoldMason LDDT JSON does not contain a scores list")
+    if len(raw) != int(length):
+        raise ValueError(
+            f"FoldMason returned {len(raw)} scores for an alignment of {length} columns"
+        )
+    scores = []
+    for value in raw:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            score = math.nan
+        scores.append(score if 0.0 <= score <= 1.0 else math.nan)
+    return scores
+
+
 def fasta_records(path: str | Path) -> dict[str, str]:
     """Read unaligned or aligned FASTA records keyed by normalized protein id."""
     records: dict[str, str] = {}
@@ -299,4 +368,3 @@ def shannon(values: list[str]) -> float:
     counts = Counter(clean)
     total = len(clean)
     return -sum((count / total) * math.log2(count / total) for count in counts.values())
-

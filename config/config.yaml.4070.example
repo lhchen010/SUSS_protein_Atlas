@@ -41,6 +41,9 @@ domain_clustering:
   leiden_seed: 42
   min_family_size: 2
 
+structural_conservation:
+  pair_threshold: 0.5
+
 classification:
   blast_evalue: 0.001             # SUSS spectrum label; 1.0 = all detectable homology, 1e-3 = stricter
   min_reciprocal_coverage: 0.5
@@ -93,7 +96,7 @@ tools:
   rate4site: /home/user/.local/bin/rate4site
   blastp: /home/user/.local/bin/blastp
   makeblastdb: /home/user/.local/bin/makeblastdb
-  fpocket: fpocket               # resolved from the suss conda environment
+  fpocket: /home/claude/.conda/envs/suss/bin/fpocket
   p2rank: /home/user/p2rank_app/p2rank/prank
   p2rank_java_env: java17
   conda: /home/user/miniconda3/bin/conda
