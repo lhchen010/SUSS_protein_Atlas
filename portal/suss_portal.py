@@ -56,6 +56,12 @@ def _normalized_pdb_name(filename, strain_code):
     accession = match.group(0) if match else os.path.basename(filename)
     return f"{strain_code}_{accession}.pdb"
 
+
+def _uploaded_filename(item):
+    """Read a cgi.FieldStorage filename without invoking its unsupported truth test."""
+    return item.filename if item is not None else ""
+
+
 # ------------------------------------------------------------------ persistence
 # Each job dir holds: manifest.json (metadata+state), run.log (full log), and the
 # original uploads under inputs/ — so history + inputs + params survive a restart.
@@ -162,7 +168,9 @@ def form_page(msg_html=""):
           <label><input type=checkbox checked disabled> QC</label>
           <label><input type=checkbox checked disabled> Cluster</label>
           <label><input type=checkbox name=classify checked> Classify (BLAST)</label>
-          <label><input type=checkbox name=conservation checked> Conservation</label>
+          <label><input type=checkbox name=domain_cluster checked> Domain-aware families</label>
+          <label><input type=checkbox name=sequence_msa checked> Sequence MSA / tree</label>
+          <label><input type=checkbox name=conservation checked> Evolutionary conservation</label>
           <label><input type=checkbox name=pocket checked> Pocket (fpocket/P2Rank)</label>
           <label><input type=checkbox name=esm checked> ESM tolerance</label>
           <label><input type=checkbox name=foldtree checked> FoldTree</label>
@@ -174,15 +182,32 @@ def form_page(msg_html=""):
       <fieldset><legend>Parameters <span class=hint>(lab defaults; usually unchanged)</span></legend>
         <label>Foldseek TM threshold <span class=hint>fold-similarity cutoff</span></label>
         <div class=rng><input type=range name=tm min=0.4 max=0.7 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
+        <label>Minimum reciprocal structural coverage <span class=hint>both proteins must align over this fraction</span></label>
+        <div class=rng><input type=range name=coverage min=0 max=1 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
         <label>Leiden resolution</label>
         <div class=rng><input type=range name=res min=0.6 max=1.6 step=0.1 value=1.0 oninput="this.nextElementSibling.textContent=this.value"><b>1.0</b></div>
         <label>Min family size</label>
         <div class=rng><input type=range name=minfam min=2 max=5 step=1 value=2 oninput="this.nextElementSibling.textContent=this.value"><b>2</b></div>
         <label>BLAST e-value (10^x)</label>
         <div class=rng><input type=range name=eexp min=-6 max=-1 step=1 value=-3 oninput="this.nextElementSibling.textContent='1e'+this.value"><b>1e-3</b></div>
+        <label>Minimum reciprocal sequence coverage</label>
+        <div class=rng><input type=range name=blast_coverage min=0 max=1 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
         <label>Project title <span class=hint>(shown as atlas heading; blank = auto)</span></label>
         <input type=text name=project_title value="" placeholder="e.g. My Lab — C. orbiculare SUSS atlas">
       </fieldset>
+      <details><summary><b>Advanced: local domain-family parameters</b></summary>
+        <fieldset style="margin-top:8px"><legend>Domain-aware Foldseek</legend>
+          <div class=hint>A D family means a local structural region is shared. Two multi-domain proteins can share a D family even when their full-length folds do not form the same F family.</div>
+          <label>Foldseek e-value (10^x)</label>
+          <div class=rng><input type=range name=domain_eexp min=-6 max=-1 step=1 value=-3 oninput="this.nextElementSibling.textContent='1e'+this.value"><b>1e-3</b></div>
+          <label>Minimum Foldseek probability</label>
+          <div class=rng><input type=range name=domain_prob min=0 max=1 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
+          <label>Minimum aligned residues</label>
+          <div class=rng><input type=range name=domain_min_aln min=20 max=150 step=5 value=40 oninput="this.nextElementSibling.textContent=this.value"><b>40</b></div>
+          <label>Minimum shorter-protein coverage <span class=hint>0 allows a shared domain within two long proteins</span></label>
+          <div class=rng><input type=range name=domain_coverage min=0 max=1 step=0.05 value=0 oninput="this.nextElementSibling.textContent=this.value"><b>0</b></div>
+        </fieldset>
+      </details>
       <button class=go type=submit>Validate &amp; build atlas</button>
       <div class=hint style="margin-top:8px">Files are validated for format before the pipeline runs. A malformed RNAseq workbook or empty structure set is rejected with a clear error.</div>
     </form>"""
@@ -202,9 +227,14 @@ def _params_block(j):
         ("Host / range", m.get("host_range", "")),
         ("Colletotrichum", "yes" if m.get("is_colleto") else "no (outgroup)"),
         ("Foldseek TM threshold", m.get("tm")),
+        ("Reciprocal structural coverage", m.get("coverage")),
         ("Leiden resolution", m.get("res")),
         ("Min family size", m.get("minfam")),
         ("BLAST e-value", m.get("evalue")),
+        ("Reciprocal sequence coverage", m.get("blast_coverage")),
+        ("Domain e-value", m.get("domain_evalue")),
+        ("Domain probability", m.get("domain_prob")),
+        ("Domain min aligned residues", m.get("domain_min_aln")),
         ("Project title", m.get("project_title") or "(auto)"),
         ("RNAseq", m.get("rnaseq_mode")),
         ("Steps run", ", ".join(["qc", "cluster"] + on + ["atlas"])),
@@ -228,6 +258,121 @@ def _params_block(j):
             f"<div style='margin-top:4px'><a href='/config?id={j['job_id']}'>view full config.yaml</a></div>"
             f"</fieldset>")
 
+
+def _structure_search_form(job_id):
+    return f"""
+    <fieldset><legend>Search this atlas by structure</legend>
+      <form method=POST action=/search-structure enctype=multipart/form-data>
+        <input type=hidden name=id value="{html.escape(job_id)}">
+        <input type=hidden name=csrf value="{CSRF_TOKEN}">
+        <label>Query structure (PDB or mmCIF)</label>
+        <input type=file name=query_structure accept=".pdb,.cif,.mmcif" required>
+        <div class=hint style="margin:5px 0 8px">Foldseek searches the database built for this run and reports the matching full-length F family, local D family membership, or singleton.</div>
+        <button class=go type=submit>Search atlas</button>
+      </form>
+    </fieldset>"""
+
+
+def _target_accession(target, code=""):
+    name = os.path.basename(str(target)).split()[0]
+    name = re.sub(r"\.(pdb|cif|mmcif)$", "", name, flags=re.I)
+    match = ACCESSION_RE.search(name)
+    if match:
+        return match.group(0)
+    prefix = f"{code}_" if code else ""
+    return name[len(prefix):] if prefix and name.startswith(prefix) else name
+
+
+def structure_search_page(job_id, query_bytes, filename):
+    j = JOBS.get(job_id)
+    if not j or j.get("state") != "done":
+        return page("<h1>Atlas is not ready</h1><p><a href=/history>Back to runs</a></p>"), 409
+    extension = os.path.splitext(filename or "")[1].lower()
+    if extension not in (".pdb", ".cif", ".mmcif"):
+        return page("<h1>Unsupported structure</h1><p>Upload a PDB or mmCIF file.</p>"), 400
+    if not query_bytes or len(query_bytes) > 25 * 1024 * 1024:
+        return page("<h1>Invalid query</h1><p>The structure is empty or exceeds 25 MB.</p>"), 400
+
+    eng = os.path.join(j["dir"], "engine")
+    db = os.path.join(eng, "results", "structure_db", "atlas")
+    index_path = os.path.join(eng, "results", "structure_search_index.csv")
+    if not os.path.exists(db + ".dbtype") or not os.path.exists(index_path):
+        return page("<h1>Search database unavailable</h1><p>This run predates atlas structure search.</p>"), 404
+
+    import csv
+    import yaml
+    cfg = yaml.safe_load(open(os.path.join(eng, "config", "config.yaml"))) or {}
+    configured = str(cfg.get("tools", {}).get("foldseek", "foldseek"))
+    foldseek = configured if os.path.isfile(configured) else shutil.which(
+        configured, path=f"{CONDA}/bin:" + os.environ.get("PATH", "")
+    )
+    if not foldseek:
+        return page("<h1>Foldseek unavailable</h1><p>The configured executable could not be found.</p>"), 500
+
+    token = uuid.uuid4().hex
+    search_dir = os.path.join(j["dir"], "structure_searches", token)
+    os.makedirs(search_dir, exist_ok=True)
+    query_path = os.path.join(search_dir, "query" + extension)
+    output_path = os.path.join(search_dir, "hits.tsv")
+    open(query_path, "wb").write(query_bytes)
+    command = [
+        foldseek, "easy-search", query_path, db, output_path,
+        os.path.join(search_dir, "tmp"), "--alignment-type", "2",
+        "-s", "9.5", "-e", "0.001", "--max-seqs", "100",
+        "--format-output",
+        "query,target,evalue,prob,bits,alntmscore,qtmscore,ttmscore,lddt,qcov,tcov,alnlen",
+    ]
+    result = subprocess.run(command, cwd=eng, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0 or not os.path.exists(output_path):
+        message = "\n".join((result.stderr + result.stdout).splitlines()[-15:])
+        return page("<h1>Structure search failed</h1><pre>" + html.escape(message) + "</pre>"), 500
+
+    index = {}
+    with open(index_path, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            index[str(row.get("acc", ""))] = row
+    columns = ["query", "target", "evalue", "prob", "bits", "alntmscore",
+               "qtmscore", "ttmscore", "lddt", "qcov", "tcov", "alnlen"]
+    hits = []
+    with open(output_path, newline="", encoding="utf-8") as fh:
+        for values in csv.reader(fh, delimiter="\t"):
+            if len(values) < len(columns):
+                continue
+            hit = dict(zip(columns, values))
+            acc = _target_accession(hit["target"], (j.get("meta") or {}).get("code", ""))
+            hit.update(index.get(acc, {}))
+            hit["acc"] = acc
+            hits.append(hit)
+    hits.sort(key=lambda x: float(x.get("bits") or 0), reverse=True)
+    rows = []
+    for hit in hits[:100]:
+        family = hit.get("family") or "unassigned"
+        locus = "singleton" if family == "singleton" else family
+        domains = hit.get("domain_families") or "none"
+        rows.append(
+            "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td>{}</td>"
+            "<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+                html.escape(hit["acc"]), html.escape(locus), html.escape(domains),
+                html.escape(hit.get("sequence_subgroup") or "none"),
+                html.escape(hit.get("prob") or ""), html.escape(hit.get("alntmscore") or ""),
+                html.escape(hit.get("lddt") or ""), html.escape(hit.get("qcov") or ""),
+            )
+        )
+    table = (
+        "<table style='width:100%;font-size:12px'><tr style='text-align:left;color:#567'>"
+        "<th>Target</th><th>F / singleton</th><th>D families</th><th>Seq subgroup</th>"
+        "<th>Prob</th><th>TM</th><th>lDDT</th><th>Query cov</th></tr>"
+        + ("".join(rows) if rows else "<tr><td colspan=8>No hit at e-value 1e-3.</td></tr>")
+        + "</table>"
+    )
+    body = (
+        f"<h1>Structure search: {html.escape(filename)}</h1>"
+        f"<div class=sub>{len(hits)} Foldseek hit(s); showing up to 100, ranked by bit score.</div>"
+        + table + f"<p><a href=/status?id={html.escape(job_id)}>Back to this atlas</a></p>"
+    )
+    return page(body, "SUSS structure search"), 200
+
+
 def help_page():
     b = """
     <h1>SUSS Atlas portal — help</h1>
@@ -235,9 +380,10 @@ def help_page():
 
     <h3>What this does</h3>
     <p style="font-size:13.5px">You upload one strain's secreted-protein AF2 structures (and optionally
-    sequences and RNAseq). The pipeline clusters them into structurally-similar families (SUSS families),
-    labels each family's sequence divergence, conservation, pockets, mutation tolerance, structural tree and
-    expression, and builds one interactive HTML atlas. SUSS = <b>Sequence-Unrelated Structurally Similar</b>.</p>
+    sequences and RNAseq). The pipeline separates whole-protein fold families (<b>F</b>), local structural-domain
+    families (<b>D</b>), and sequence-homologous subgroups (<b>S</b>), then integrates conservation, pockets,
+    mutation tolerance, structural and sequence relationship trees, annotation, and expression.
+    SUSS = <b>Sequence-Unrelated Structurally Similar</b>.</p>
 
     <h3>Inputs</h3>
     <ul style="font-size:13.5px">
@@ -267,24 +413,30 @@ def help_page():
     <ul style="font-size:13.5px">
       <li><b>Foldseek TM threshold</b> (0.5) — fold-similarity cutoff for linking two structures. 0.5 is the accepted
           fold-similarity boundary; higher = stricter (fewer, tighter families).</li>
+      <li><b>Reciprocal structural coverage</b> (0.5) — both proteins must align over this fraction before a
+          full-length F-family edge is accepted.</li>
       <li><b>Leiden resolution</b> (1.0) — clustering granularity. Higher = more, smaller families.</li>
       <li><b>Min family size</b> (2) — smallest cluster kept as a family; singletons are set aside.</li>
       <li><b>BLAST e-value</b> (1e-3) — sequence-homology sensitivity used only to <i>label</i> divergence
           (core_SUSS / diverged / moderate / recent). It never splits a structural family.</li>
+      <li><b>Reciprocal sequence coverage</b> (0.5) — both proteins must have sufficient BLAST alignment coverage
+          to count as sequence-related and enter the same S subgroup.</li>
+      <li><b>Advanced domain settings</b> control local Foldseek 3Di+AA segment matches. A D family can connect
+          one shared domain in proteins whose complete architectures belong to different F families.</li>
     </ul>
 
     <h3>Analyses (toggle per run)</h3>
-    <p style="font-size:13.5px">QC and clustering always run. Optional: classify (BLAST divergence), conservation
-    (Rate4Site), pocket (fpocket + P2Rank), ESM tolerance (GPU), FoldTree (structural tree), annotate
-    (InterPro/Foldseek/EffectorP), cards, RNAseq. Turn off what a strain doesn't need (e.g. no RNAseq, skip pocket).</p>
+    <p style="font-size:13.5px">QC and F-family clustering always run. Optional: D-family discovery, BLAST
+    classification, MAFFT sequence MSA/tree, Rate4Site evolutionary conservation, pocket (fpocket + P2Rank),
+    ESM tolerance (GPU), FoldTree (structural relationship tree), annotation, and RNAseq. FoldMason structural
+    MSA and structural conservation are distinct from MAFFT/Rate4Site sequence evolution.</p>
 
     <h3 id=structure>The 3D structure viewer</h3>
     <ul style="font-size:13.5px">
       <li><b>Click any residue</b> in the structure to label it with its amino-acid name and position
           (e.g. "CYS 47"); click the label again to remove it. Works in every colouring mode.</li>
-      <li><b>Colour modes</b>: Conservation (Rate4Site; blue=variable→red=conserved), ESM tolerance
-          (blue=constrained→red=mutation-tolerant), Pocket (grey scaffold, red pocket residues), and
-          Superpose selected (overlay picked members from the tree).</li>
+      <li><b>Colour modes</b>: Structural conservation (FoldMason correspondence), evolutionary conservation
+          (Rate4Site only when an eligible S subgroup exists), ESM tolerance, Pocket, and Superpose selected.</li>
       <li><b>Representation</b>: cartoon / surface / stick / sphere / line, independent of colour mode.</li>
     </ul>
     <p style="font-size:13.5px" id=chimerax><b>Opening the pocket PDB in ChimeraX / PyMOL.</b>
@@ -374,6 +526,11 @@ show sel atoms ; color sel red</pre>
     </ul>
     <p style="font-size:13.5px">Inside the atlas, each family also offers per-member sequence (FASTA) and structure (PDB) downloads.</p>
 
+    <h3>Structure search</h3>
+    <p style="font-size:13.5px">Every completed run has its own Foldseek database. Upload one PDB or mmCIF on
+    the result page to see matching proteins and their F family or singleton state, D-family memberships, and
+    S subgroup. Hits are ranked by Foldseek bit score and include probability, TM, lDDT, and query coverage.</p>
+
     <h3>History &amp; reproducibility</h3>
     <p style="font-size:13.5px">Every run is saved: the <a href=/history>history page</a> lists all builds (survives server
     restarts). Each result page shows the exact parameters used, links the original uploaded inputs, and the full
@@ -450,6 +607,7 @@ def status_page(job_id):
                     f"<div class=hint>The downloaded <code>.html</code> is fully self-contained (structures, plots and viewers all embedded, no external files). "
                     f"Drop it straight onto any web host — Netlify, a lab website, or open it locally by double-clicking. Nothing else needs to ship with it.</div>"
                     f"<p style='margin-top:10px'><a href=/log?id={job_id}>log</a> &middot; <a href=/history>all runs</a> &middot; <a href=/help>help</a></p>"
+                    + _structure_search_form(job_id)
                     + _params_block(j)
                     + f"<p><a href=/>← new build</a></p>")
     # running / validating -> auto-refresh
@@ -476,8 +634,16 @@ def _write_config(eng, meta):
     cfg.setdefault("input", {}).update(
         pdb_dir="input/pdb", seqs_fasta="input/seqs.fasta", rnaseq_xlsx=meta["rnaseq_xlsx"])
     cfg.setdefault("clustering", {}).update(
-        foldseek_tm=meta["tm"], leiden_resolution=meta["res"], min_family_size=meta["minfam"])
-    cfg.setdefault("classification", {}).update(blast_evalue=meta["evalue"])
+        foldseek_tm=meta["tm"], whole_fold_min_coverage=meta["coverage"],
+        alignment_type=1, leiden_resolution=meta["res"], min_family_size=meta["minfam"])
+    cfg.setdefault("domain_clustering", {}).update(
+        alignment_type=2, evalue=meta["domain_evalue"],
+        min_probability=meta["domain_prob"],
+        min_aligned_residues=meta["domain_min_aln"],
+        min_shorter_coverage=meta["domain_coverage"])
+    cfg.setdefault("classification", {}).update(
+        blast_evalue=meta["evalue"],
+        min_reciprocal_coverage=meta["blast_coverage"])
     st = cfg.setdefault("steps", {})
     st.update(qc=True, cluster=True, cards=True, atlas=True, rnaseq=meta["rnaseq_mode"],
               **{k: bool(v) for k, v in steps_in.items()})
@@ -708,6 +874,29 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/delete":
             self._handle_delete(); return
+        if self.path == "/search-structure":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if length <= 0 or length > 30 * 1024 * 1024:
+                self._send(page("<h1>Invalid structure upload</h1>"), code=413); return
+            ctype = self.headers.get("Content-Type", "")
+            form = cgi.FieldStorage(
+                fp=self.rfile, headers=self.headers,
+                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
+            )
+            if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
+                self._send(page("<h1>Invalid request token</h1>"), code=403); return
+            jid = os.path.basename(form.getfirst("id", ""))
+            item = form["query_structure"] if "query_structure" in form else None
+            data = item.file.read() if item is not None and item.filename else b""
+            body, code = structure_search_page(
+                jid,
+                data,
+                _uploaded_filename(item),
+            )
+            self._send(body, code=code); return
         if self.path != "/run":
             self._send(page("<h1>404</h1>"), code=404); return
         try:
@@ -743,13 +932,20 @@ class H(BaseHTTPRequestHandler):
             host_range=_field(form, "host_range", ""),
             is_colleto=(_field(form, "is_colleto", "true") == "true"),
             tm=float(_field(form, "tm", "0.5")),
+            coverage=float(_field(form, "coverage", "0.5")),
             res=float(_field(form, "res", "1.0")),
             minfam=int(_field(form, "minfam", "2")),
             evalue=10 ** int(_field(form, "eexp", "-3")),
+            blast_coverage=float(_field(form, "blast_coverage", "0.5")),
+            domain_evalue=10 ** int(_field(form, "domain_eexp", "-3")),
+            domain_prob=float(_field(form, "domain_prob", "0.5")),
+            domain_min_aln=int(_field(form, "domain_min_aln", "40")),
+            domain_coverage=float(_field(form, "domain_coverage", "0")),
             project_title=_field(form, "project_title", "").replace('"', "'"),
             rnaseq_xlsx=("input/rnaseq.xlsx" if rnaseq_given else ""),
             rnaseq_mode=(("true" if ck("rnaseq_step") else "false") if rnaseq_given else "false"),
-            steps=dict(classify=ck("classify"), conservation=ck("conservation"),
+            steps=dict(classify=ck("classify"), domain_cluster=ck("domain_cluster"),
+                       sequence_msa=ck("sequence_msa"), conservation=ck("conservation"),
                        pocket=ck("pocket"), esm=ck("esm"), foldtree=ck("foldtree"),
                        annotate=ck("annotate")),
         )

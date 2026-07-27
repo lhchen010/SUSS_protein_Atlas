@@ -48,6 +48,16 @@ class PortalArchiveTests(unittest.TestCase):
             "new_TDZ13209.1.pdb",
         )
 
+    def test_upload_filename_does_not_truth_test_field_storage(self):
+        class Upload:
+            filename = "query.pdb"
+
+            def __bool__(self):
+                raise TypeError("Cannot be converted to bool.")
+
+        self.assertEqual(self.portal._uploaded_filename(Upload()), "query.pdb")
+        self.assertEqual(self.portal._uploaded_filename(None), "")
+
     @classmethod
     def setUpClass(cls):
         cls.runs = tempfile.TemporaryDirectory()

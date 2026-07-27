@@ -1,11 +1,10 @@
-"""signature rule — merge Rate4Site conservation with per-residue SASA on the family
-reference structure. conservation = -raw_score (higher = more conserved). Emits the
-per-residue signature CSV + cons-vs-SASA correlation. (recovered from signature.py)
-"""
-import os, re
+"""Merge sequence evolution, structural conservation, and SASA on the family hub."""
+import json, os, re
 import numpy as np, pandas as pd
 
 r4s_path = snakemake.input.r4s
+structural_path = snakemake.input.structural
+status_path = snakemake.input.status
 sasa_csv = snakemake.input.sasa
 ref_path = snakemake.input.ref            # {fam}.ref — the EXACT protein r4s numbered by
 pdb_dir  = getattr(snakemake.input, "pdb_dir", None)
@@ -26,20 +25,49 @@ if ref is None:
 
 def read_r4s(path):
     rows = []
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return pd.DataFrame(columns=["resi", "aa", "cons"])
     for line in open(path):
         m = re.match(r"^\s*(\d+)\s+(\S)\s+(-?[\d.]+)", line.strip())
         if m: rows.append(dict(resi=int(m.group(1)), aa=m.group(2), cons=float(m.group(3))))
     return pd.DataFrame(rows)
 
 r4s = read_r4s(r4s_path)
+if "aa" in r4s:
+    r4s = r4s.rename(columns={"aa": "aa_r4s"})
+structural = (
+    pd.read_csv(structural_path)
+    if os.path.exists(structural_path) and os.path.getsize(structural_path) > 0
+    else pd.DataFrame(columns=["resi", "aa"])
+)
+if "aa" in structural:
+    structural = structural.rename(columns={"aa": "aa_struct"})
+status = json.load(open(status_path)) if os.path.exists(status_path) else {}
 sasa = pd.read_csv(sasa_csv)
 s = sasa[sasa.acc == ref][["resi","aa","rel_sasa"]].copy()
+s = s.rename(columns={"aa": "aa_sasa"})
 s["rel_sasa"] = pd.to_numeric(s["rel_sasa"], errors="coerce")
-m = r4s.merge(s, on="resi", suffixes=("_r4s","_sasa"))
-m["conservation"] = -m["cons"]                       # sign flip: higher = more conserved
+if len(structural):
+    m = structural.merge(s, on="resi", how="left", suffixes=("_struct", "_sasa"))
+else:
+    m = s.copy()
+if len(r4s):
+    m = m.merge(r4s, on="resi", how="left")
+else:
+    m["cons"] = np.nan
+    m["aa_r4s"] = pd.NA
+m["sequence_conservation"] = -pd.to_numeric(m["cons"], errors="coerce")
+# Backward-compatible column name. It is explicitly sequence evolutionary
+# conservation and remains NA when Rate4Site is not scientifically applicable.
+m["conservation"] = m["sequence_conservation"]
+m["rate4site_status"] = status.get("rate4site_status", "status_unavailable")
 valid = m.dropna(subset=["rel_sasa","conservation"])
 r = float(np.corrcoef(valid.conservation, valid.rel_sasa)[0,1]) if len(valid) > 2 else float("nan")
-aa_match = float((m.aa_r4s == m.aa_sasa).mean()) if len(m) else 0.0
+if "aa_r4s" in m and "aa_sasa" in m:
+    compared = m.dropna(subset=["aa_r4s", "aa_sasa"])
+    aa_match = float((compared.aa_r4s == compared.aa_sasa).mean()) if len(compared) else float("nan")
+else:
+    aa_match = float("nan")
 os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 m.to_csv(out_csv, index=False)
 
@@ -47,7 +75,7 @@ m.to_csv(out_csv, index=False)
 # viewer (3Dmol) can color by conservation. resi -> conservation from the signature.
 if out_pdb and pdb_dir and ref:
     import glob
-    cons_by_resi = dict(zip(m.resi, m.conservation))
+    cons_by_resi = dict(zip(m.resi, m.sequence_conservation))
     cand = ([os.path.join(pdb_dir, f"{strain}_{ref}.pdb")] if strain else []) + \
            glob.glob(os.path.join(pdb_dir, f"*{ref}*.pdb"))
     src = next((p for p in cand if os.path.exists(p)), None)
@@ -65,5 +93,5 @@ if out_pdb and pdb_dir and ref:
     else:
         open(out_pdb, "w").write("")   # empty placeholder so the output exists
 print(f"{fam} signature: ref={ref} n_aligned={len(m)} aa_match={aa_match:.3f} "
-      f"cons_sasa_r={r:.3f} (n_valid={len(valid)})")
-
+      f"cons_sasa_r={r:.3f} (n_valid={len(valid)}, "
+      f"rate4site={status.get('rate4site_status', 'unknown')})")

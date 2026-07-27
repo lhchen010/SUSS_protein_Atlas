@@ -20,13 +20,30 @@ input:
 
 clustering:
   foldseek_tm: 0.5
+  whole_fold_min_coverage: 0.5
   tm_symmetric: min
+  alignment_type: 1
+  exhaustive_search: true
+  search_evalue: inf
+  leiden_resolution: 1.0
+  leiden_seed: 42
+  min_family_size: 2
+
+domain_clustering:
+  alignment_type: 2
+  evalue: 0.001
+  sensitivity: 9.5
+  min_probability: 0.5
+  min_aligned_residues: 40
+  min_shorter_coverage: 0.0
+  interval_overlap: 0.5
   leiden_resolution: 1.0
   leiden_seed: 42
   min_family_size: 2
 
 classification:
   blast_evalue: 0.001             # SUSS spectrum label; 1.0 = all detectable homology, 1e-3 = stricter
+  min_reciprocal_coverage: 0.5
 
 qc:
   min_plddt: 50
@@ -42,12 +59,15 @@ signals:
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
   pockets: [fpocket, p2rank]
+  min_rate4site_sequences: 4
 
 steps:
   qc: true
   cluster: true
   tm_refine: true                 # US-align within-family TM cross-check
   classify: true
+  domain_cluster: true
+  sequence_msa: true
   conservation: true
   pocket: true
   esm: true
@@ -68,6 +88,8 @@ tools:
   foldseek: /home/user/miniconda3/bin/foldseek
   usalign: /home/user/USalign/USalign   # algorithm-independent TM cross-check (within-family)
   foldmason: /home/user/miniconda3/bin/foldmason
+  mafft: /home/claude/.conda/envs/suss/bin/mafft
+  fasttree: /home/claude/.conda/envs/suss/bin/FastTree
   rate4site: /home/user/.local/bin/rate4site
   blastp: /home/user/.local/bin/blastp
   makeblastdb: /home/user/.local/bin/makeblastdb

@@ -19,13 +19,30 @@ input:
 
 clustering:
   foldseek_tm: 0.5
+  whole_fold_min_coverage: 0.5
   tm_symmetric: min
+  alignment_type: 1
+  exhaustive_search: true
+  search_evalue: inf
+  leiden_resolution: 1.0
+  leiden_seed: 42
+  min_family_size: 2
+
+domain_clustering:
+  alignment_type: 2
+  evalue: 0.001
+  sensitivity: 9.5
+  min_probability: 0.5
+  min_aligned_residues: 40
+  min_shorter_coverage: 0.0
+  interval_overlap: 0.5
   leiden_resolution: 1.0
   leiden_seed: 42
   min_family_size: 2
 
 classification:
   blast_evalue: 0.001
+  min_reciprocal_coverage: 0.5
 
 qc:
   min_plddt: 50
@@ -37,6 +54,7 @@ signals:
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
   pockets: [fpocket, p2rank]
+  min_rate4site_sequences: 4
 
 # Core-only: clustering + independent-TM cross-check + matrices + cards + atlas.
 # Everything needing external DBs / license tools / GPU is OFF for the example.
@@ -45,6 +63,8 @@ steps:
   cluster: true
   tm_refine: true       # US-align independent TM (needs USalign on PATH; see INSTALL)
   classify: true        # BLAST (conda) — labels SUSS spectrum
+  domain_cluster: true  # local structural domain layer
+  sequence_msa: true    # MAFFT for homologous subgroups
   conservation: true    # Rate4Site (conda)
   pocket: true          # fpocket (conda)
   esm: false            # OFF (needs ESM-Scan + GPU/torch)
@@ -64,6 +84,8 @@ tools:
   foldseek: foldseek
   usalign: USalign
   foldmason: foldmason
+  mafft: mafft
+  fasttree: FastTree
   rate4site: rate4site
   blastp: blastp
   makeblastdb: makeblastdb
