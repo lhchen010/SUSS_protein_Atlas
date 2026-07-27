@@ -106,7 +106,10 @@ Validation date: 2026-07-28 (Asia/Taipei).
     and evidence-download controls.
 - Atlas build: completed without fallback; generated the atlas HTML, family summary workbook,
   master table, and composition workbook.
-- GitHub Actions: pending release push.
+- GitHub Actions: both the branch-push and pull-request `python-tests` runs passed.
+- GitHub publication: PR #14 was merged into `main` as feature merge `e7bb4bd`;
+  release `v3.0.0` is published at
+  `https://github.com/lhchen010/SUSS_protein_Atlas/releases/tag/v3.0.0`.
 - Production deployment: complete at `http://100.80.77.29:8600/`.
   The validated result is available in portal history as `20260728-v3-reference`.
   The previous engine and portal files were retained with `.pre-20260728-v3.0.0` suffixes.
