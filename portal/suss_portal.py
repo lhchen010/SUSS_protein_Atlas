@@ -19,7 +19,8 @@ Env knobs (set before launch):
                     to reach it from a browser over tailscale — tailscale is a private
                     encrypted network, so binding its interface is the intended intranet use)
 """
-import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid
+import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid, glob
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ENGINE_TAR = os.environ.get("SUSS_ENGINE_TAR", os.path.expanduser("~/suss_engine.tar.gz"))
@@ -204,6 +205,10 @@ def form_page(msg_html=""):
           <div class=rng><input type=range name=domain_prob min=0 max=1 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
           <label>Minimum aligned residues</label>
           <div class=rng><input type=range name=domain_min_aln min=20 max=150 step=5 value=40 oninput="this.nextElementSibling.textContent=this.value"><b>40</b></div>
+          <label>Minimum local lDDT <span class=hint>primary geometric-quality filter; 0.5 is the atlas default</span></label>
+          <div class=rng><input type=range name=domain_lddt min=0 max=1 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
+          <label>Minimum alignment TM <span class=hint>optional second filter; 0 disables it</span></label>
+          <div class=rng><input type=range name=domain_alntm min=0 max=1 step=0.05 value=0 oninput="this.nextElementSibling.textContent=this.value"><b>0</b></div>
           <label>Minimum shorter-protein coverage <span class=hint>0 allows a shared domain within two long proteins</span></label>
           <div class=rng><input type=range name=domain_coverage min=0 max=1 step=0.05 value=0 oninput="this.nextElementSibling.textContent=this.value"><b>0</b></div>
         </fieldset>
@@ -235,6 +240,9 @@ def _params_block(j):
         ("Domain e-value", m.get("domain_evalue")),
         ("Domain probability", m.get("domain_prob")),
         ("Domain min aligned residues", m.get("domain_min_aln")),
+        ("Domain minimum local lDDT", m.get("domain_lddt")),
+        ("Domain minimum alignment TM", m.get("domain_alntm")),
+        ("Domain minimum coverage", m.get("domain_coverage")),
         ("Project title", m.get("project_title") or "(auto)"),
         ("RNAseq", m.get("rnaseq_mode")),
         ("Steps run", ", ".join(["qc", "cluster"] + on + ["atlas"])),
@@ -322,9 +330,19 @@ def structure_search_page(job_id, query_bytes, filename):
         "--format-output",
         "query,target,evalue,prob,bits,alntmscore,qtmscore,ttmscore,lddt,qcov,tcov,alnlen",
     ]
-    result = subprocess.run(command, cwd=eng, capture_output=True, text=True, timeout=600)
+    try:
+        result = subprocess.run(
+            command, cwd=eng, capture_output=True, text=True, timeout=600
+        )
+    except subprocess.TimeoutExpired:
+        shutil.rmtree(search_dir, ignore_errors=True)
+        return page(
+            "<h1>Structure search timed out</h1>"
+            "<p>Foldseek exceeded the 10 minute query limit.</p>"
+        ), 504
     if result.returncode != 0 or not os.path.exists(output_path):
         message = "\n".join((result.stderr + result.stdout).splitlines()[-15:])
+        shutil.rmtree(search_dir, ignore_errors=True)
         return page("<h1>Structure search failed</h1><pre>" + html.escape(message) + "</pre>"), 500
 
     index = {}
@@ -349,10 +367,40 @@ def structure_search_page(job_id, query_bytes, filename):
         family = hit.get("family") or "unassigned"
         locus = "singleton" if family == "singleton" else family
         domains = hit.get("domain_families") or "none"
+        atlas_base = f"/atlas?id={urllib.parse.quote(job_id)}"
+        protein_link = (
+            f"{atlas_base}&protein={urllib.parse.quote(hit['acc'])}"
+        )
+        if family == "singleton":
+            locus_html = (
+                f'<a href="{protein_link}">singleton</a>'
+            )
+        elif family and family != "unassigned":
+            locus_html = (
+                f'<a href="{atlas_base}&open={urllib.parse.quote(family)}">'
+                f"{html.escape(family)}</a>"
+            )
+        else:
+            locus_html = html.escape(locus)
+        domain_ids = [
+            value.strip()
+            for value in re.split(r"[,;|\s]+", domains)
+            if re.fullmatch(r"D\d+", value.strip(), flags=re.I)
+        ]
+        domains_html = (
+            ", ".join(
+                f'<a href="{atlas_base}&open={urllib.parse.quote(domain_id)}'
+                f'&segment={urllib.parse.quote(hit["acc"])}">'
+                f"{html.escape(domain_id)}</a>"
+                for domain_id in domain_ids
+            )
+            if domain_ids else html.escape(domains)
+        )
         rows.append(
             "<tr><td><b>{}</b></td><td>{}</td><td>{}</td><td>{}</td>"
             "<td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
-                html.escape(hit["acc"]), html.escape(locus), html.escape(domains),
+                f'<a href="{protein_link}">{html.escape(hit["acc"])}</a>',
+                locus_html, domains_html,
                 html.escape(hit.get("sequence_subgroup") or "none"),
                 html.escape(hit.get("prob") or ""), html.escape(hit.get("alntmscore") or ""),
                 html.escape(hit.get("lddt") or ""), html.escape(hit.get("qcov") or ""),
@@ -370,6 +418,7 @@ def structure_search_page(job_id, query_bytes, filename):
         f"<div class=sub>{len(hits)} Foldseek hit(s); showing up to 100, ranked by bit score.</div>"
         + table + f"<p><a href=/status?id={html.escape(job_id)}>Back to this atlas</a></p>"
     )
+    shutil.rmtree(search_dir, ignore_errors=True)
     return page(body, "SUSS structure search"), 200
 
 
@@ -517,12 +566,14 @@ show sel atoms ; color sel red</pre>
     residues; n small (2–4 member families) makes them low-power — such cards are flagged "n small".
     "conservation" = −(Rate4Site rate), so higher = more conserved.</p>
 
-    <h3>The atlas HTML</h3>
-    <p style="font-size:13.5px">The finished atlas is a <b>single self-contained HTML file</b> — every structure, plot,
-    matrix and 3D viewer is embedded, with no external dependencies. Download it and:</p>
+    <h3>The atlas and its data</h3>
+    <p style="font-size:13.5px">Portal runs use a <b>server-backed atlas</b>. Networks, tables, plots, and viewers
+    live in the HTML, while large structures, workbooks, and ZIP files are fetched from this server only when
+    selected. This keeps large atlases responsive and avoids loading hundreds of megabytes at once.</p>
     <ul style="font-size:13.5px">
-      <li>Open locally by double-clicking (works offline, any modern browser).</li>
-      <li>Publish by dropping the one file onto Netlify / a lab website — nothing else needs to ship with it.</li>
+      <li>Use <b>Open atlas</b> for the complete interactive experience.</li>
+      <li>The downloaded HTML shell still needs this portal's artifact endpoint.</li>
+      <li>For a portable offline export, rebuild with <code>output.html_mode: single</code>.</li>
     </ul>
     <p style="font-size:13.5px">Inside the atlas, each family also offers per-member sequence (FASTA) and structure (PDB) downloads.</p>
 
@@ -599,13 +650,13 @@ def status_page(job_id):
         return page(head + f"<div class=ok>Done — {fam} families. Atlas ready.</div>"
                     f"<div style='margin:14px 0'>"
                     f"<a href=/atlas?id={job_id} style='background:#1a6db0;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px'>▶ Open atlas</a> "
-                    f"<a href=/atlas?id={job_id}&dl=1 style='background:#1d6b2c;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px;margin-left:6px'>⬇ Download atlas HTML</a>"
+                    f"<a href=/atlas?id={job_id}&dl=1 style='background:#1d6b2c;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px;margin-left:6px'>⬇ Download atlas shell</a>"
                     f"<a href=/summary?id={job_id} style='background:#6a4a9c;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px;margin-left:6px'>⬇ Family summary (Excel)</a>"
                     f"</div>"
                     f"<div class=hint>The <b>family summary</b> Excel has one row per cluster: members, consensus annotation, "
                     f"Pfam/PDB fold, pocket residues (fpocket + P2Rank), mean structural similarity (TM), sequence identity, and SUSS %.</div>"
-                    f"<div class=hint>The downloaded <code>.html</code> is fully self-contained (structures, plots and viewers all embedded, no external files). "
-                    f"Drop it straight onto any web host — Netlify, a lab website, or open it locally by double-clicking. Nothing else needs to ship with it.</div>"
+                    f"<div class=hint>Portal atlases use server-backed mode: large structures, ZIP files, and workbooks are loaded only when requested. "
+                    f"The downloaded HTML shell therefore needs this portal's <code>/artifact</code> endpoint. Use <code>output.html_mode: single</code> when a portable offline file is required.</div>"
                     f"<p style='margin-top:10px'><a href=/log?id={job_id}>log</a> &middot; <a href=/history>all runs</a> &middot; <a href=/help>help</a></p>"
                     + _structure_search_form(job_id)
                     + _params_block(j)
@@ -640,6 +691,8 @@ def _write_config(eng, meta):
         alignment_type=2, evalue=meta["domain_evalue"],
         min_probability=meta["domain_prob"],
         min_aligned_residues=meta["domain_min_aln"],
+        min_lddt=meta["domain_lddt"],
+        min_alntm=meta["domain_alntm"],
         min_shorter_coverage=meta["domain_coverage"])
     cfg.setdefault("classification", {}).update(
         blast_evalue=meta["evalue"],
@@ -648,7 +701,7 @@ def _write_config(eng, meta):
     st.update(qc=True, cluster=True, cards=True, atlas=True, rnaseq=meta["rnaseq_mode"],
               **{k: bool(v) for k, v in steps_in.items()})
     cfg.setdefault("output", {}).update(
-        html_mode="single", atlas_name=f"{meta['code']}_suss_atlas",
+        html_mode="backend", atlas_name=f"{meta['code']}_suss_atlas",
         project_title=meta["project_title"])
     yaml.safe_dump(cfg, open(cfgp, "w"), sort_keys=False, allow_unicode=True)
 
@@ -781,6 +834,22 @@ class H(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _stream_file(self, path, ctype, filename=None, disposition="inline"):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(os.path.getsize(path)))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        if filename:
+            self.send_header(
+                "Content-Disposition", f'{disposition}; filename="{filename}"'
+            )
+        self.end_headers()
+        try:
+            with open(path, "rb") as handle:
+                shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def do_GET(self):
         from urllib.parse import urlparse, parse_qs
         u = urlparse(self.path); q = parse_qs(u.query)
@@ -831,15 +900,48 @@ class H(BaseHTTPRequestHandler):
             self._send(open(p, "rb").read(),
                        ctype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        extra={"Content-Disposition": f'attachment; filename="{j["job_id"]}_{fn}"'})
+        elif u.path == "/artifact":
+            j = JOBS.get(q.get("id", [""])[0])
+            kind = q.get("kind", [""])[0]
+            name = q.get("name", [""])[0]
+            if not j or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+                self._send(page("<h1>Artifact not found</h1>"), code=404); return
+            engine = os.path.join(j["dir"], "engine")
+            if kind == "structure":
+                candidates = [
+                    os.path.join(engine, "input", "pdb", f"{name}.pdb"),
+                    *glob.glob(os.path.join(engine, "input", "pdb", f"*_{name}.pdb")),
+                    *glob.glob(os.path.join(engine, "input", "pdb", f"*{name}*.pdb")),
+                ]
+                path = next((p for p in candidates if os.path.isfile(p)), "")
+                ctype = "chemical/x-pdb"
+                filename = f"{name}.pdb"
+            elif kind == "xlsx":
+                path = os.path.join(engine, "results", "downloads", f"{name}_data.xlsx")
+                ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                filename = f"{name}_data.xlsx"
+            elif kind == "structures":
+                path = os.path.join(
+                    engine, "results", "downloads", f"{name}_member_structures.zip"
+                )
+                ctype = "application/zip"
+                filename = f"{name}_member_structures.zip"
+            else:
+                path = ""
+                ctype = "application/octet-stream"
+                filename = name
+            if not path or not os.path.isfile(path):
+                self._send(page("<h1>Artifact not found</h1>"), code=404); return
+            self._stream_file(path, ctype, filename, disposition="attachment")
         elif u.path == "/atlas":
             j = JOBS.get(q.get("id", [""])[0])
             if not j or not j.get("atlas") or not os.path.exists(j["atlas"]):
                 self._send(page("<h1>Atlas not ready</h1>"), code=404); return
-            data = open(j["atlas"], "rb").read()
             dispo = "attachment" if q.get("dl") else "inline"
             fn = os.path.basename(j["atlas"])
-            self._send(data, ctype="text/html; charset=utf-8",
-                       extra={"Content-Disposition": f'{dispo}; filename="{fn}"'})
+            self._stream_file(
+                j["atlas"], "text/html; charset=utf-8", fn, disposition=dispo
+            )
         else:
             self._send(page("<h1>404</h1>"), code=404)
 
@@ -940,6 +1042,8 @@ class H(BaseHTTPRequestHandler):
             domain_evalue=10 ** int(_field(form, "domain_eexp", "-3")),
             domain_prob=float(_field(form, "domain_prob", "0.5")),
             domain_min_aln=int(_field(form, "domain_min_aln", "40")),
+            domain_lddt=float(_field(form, "domain_lddt", "0.5")),
+            domain_alntm=float(_field(form, "domain_alntm", "0")),
             domain_coverage=float(_field(form, "domain_coverage", "0")),
             project_title=_field(form, "project_title", "").replace('"', "'"),
             rnaseq_xlsx=("input/rnaseq.xlsx" if rnaseq_given else ""),

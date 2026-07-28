@@ -42,6 +42,12 @@ edges = whole_fold_edges(
     coverage_threshold=COV_THR,
     symmetry=SYM,
 )
+all_pair_edges = whole_fold_edges(
+    df,
+    tm_threshold=0.0,
+    coverage_threshold=0.0,
+    symmetry=SYM,
+)
 
 qc = pd.read_csv(qc_csv)
 qc = qc[qc["pass"]] if "pass" in qc.columns else qc
@@ -68,11 +74,18 @@ rows = []
 for fid in fam_sizes.index:
     fam = fam_rank[fid]; accs = comm[comm.community == fid].acc.tolist()
     e_in = keep[(keep.q.isin(accs)) & (keep.t.isin(accs))]
+    retained_tm = round(e_in.tm.mean(), 3) if len(e_in) else np.nan
+    retained_fident = round(e_in.fident.mean(), 3) if len(e_in) else np.nan
+    retained_fident_max = round(e_in.fident.max(), 3) if len(e_in) else np.nan
     rows.append(dict(family=fam, community=int(fid), n_members=len(accs),
                      n_edges=len(e_in),
-                     mean_TM=round(e_in.tm.mean(),3) if len(e_in) else np.nan,
-                     mean_identity=round(e_in.fident.mean(),3) if len(e_in) else np.nan,
-                     max_identity=round(e_in.fident.max(),3) if len(e_in) else np.nan,
+                     mean_retained_edge_TM=retained_tm,
+                     mean_retained_edge_foldseek_fident=retained_fident,
+                     max_retained_edge_foldseek_fident=retained_fident_max,
+                     # Legacy aliases retained for existing downstream consumers.
+                     mean_TM=retained_tm,
+                     mean_identity=retained_fident,
+                     max_identity=retained_fident_max,
                      mean_pLDDT=round(comm[comm.community==fid].plddt.mean(),1),
                      mean_len=int(comm[comm.community==fid].length.mean())))
 fam = pd.DataFrame(rows).sort_values("n_members", ascending=False).reset_index(drop=True)
@@ -88,18 +101,22 @@ keep.to_csv(out_edge, index=False)
 # so FoldMason MSA, rate4site -a, pocket ref, and hub marking all use the SAME protein.
 pdb_dir = snakemake.config["input"]["pdb_dir"]
 acc2fn = dict(zip(qc.acc, qc.fn)) if "fn" in qc.columns else {}
-# symmetric TM per undirected pair for hub scoring
-tm_pair = keep.copy()
+# Hub scoring uses every available within-family Foldseek pair, including hits below
+# the clustering threshold. Missing pairs contribute zero, matching matrices.py.
+tm_pair = all_pair_edges[
+    all_pair_edges.q.isin(all_nodes) & all_pair_edges.t.isin(all_nodes)
+].copy()
 for fid in fam_sizes.index:
     famname = fam_rank[fid]; accs = comm[comm.community == fid].acc.tolist()
     aset = set(accs)
     sub = tm_pair[tm_pair.q.isin(aset) & tm_pair.t.isin(aset)]
-    if len(sub) and len(accs) > 2:
-        meantm = {}
-        for a in accs:
-            v = sub[(sub.q == a) | (sub.t == a)].tm
-            meantm[a] = float(v.mean()) if len(v) else 0.0
-        hub = max(accs, key=lambda a: meantm.get(a, 0.0))
+    if len(accs) > 1:
+        meantm = {
+            a: float(sub.loc[(sub.q == a) | (sub.t == a), "tm"].sum())
+            / (len(accs) - 1)
+            for a in accs
+        }
+        hub = max(sorted(accs), key=lambda a: meantm[a])
     else:
         hub = accs[0]
     ordered = [hub] + [a for a in accs if a != hub]

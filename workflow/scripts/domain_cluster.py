@@ -22,8 +22,11 @@ columns = [
     "evalue",
     "prob",
     "bits",
+    "alntmscore",
     "lddt",
     "fident",
+    "qcov",
+    "tcov",
 ]
 try:
     hits = pd.read_csv(snakemake.input.tsv, sep="\t", names=columns)
@@ -35,6 +38,8 @@ segments, edges = domain_segments(
     probability_threshold=float(snakemake.params.probability),
     min_aligned_residues=int(snakemake.params.min_aligned),
     min_shorter_coverage=float(snakemake.params.min_coverage),
+    min_lddt=float(snakemake.params.min_lddt),
+    min_alntm=float(snakemake.params.min_alntm),
     interval_overlap=float(snakemake.params.interval_overlap),
 )
 
@@ -43,7 +48,10 @@ if len(segments):
     graph.add_vertices(segments.segment_id.tolist())
     if len(edges):
         graph.add_edges(list(zip(edges.source, edges.target)))
-        graph.es["weight"] = edges.prob.fillna(0).astype(float).tolist()
+        graph.es["weight"] = (
+            edges.prob.fillna(0).astype(float)
+            * edges.lddt.fillna(0).astype(float)
+        ).tolist()
     partition = leidenalg.find_partition(
         graph,
         leidenalg.RBConfigurationVertexPartition,
@@ -86,7 +94,10 @@ for family, group in segments.groupby("domain_family"):
             "n_proteins": group.acc.nunique(),
             "n_edges": len(family_edges),
             "mean_probability": family_edges.prob.mean() if len(family_edges) else None,
+            "mean_alntm": family_edges.alntmscore.mean() if len(family_edges) else None,
             "mean_lddt": family_edges.lddt.mean() if len(family_edges) else None,
+            "mean_query_coverage": family_edges.qcov.mean() if len(family_edges) else None,
+            "mean_target_coverage": family_edges.tcov.mean() if len(family_edges) else None,
             "mean_aligned_residues": (
                 family_edges.alnlen.mean() if len(family_edges) else None
             ),
@@ -100,7 +111,10 @@ families = pd.DataFrame(
         "n_proteins",
         "n_edges",
         "mean_probability",
+        "mean_alntm",
         "mean_lddt",
+        "mean_query_coverage",
+        "mean_target_coverage",
         "mean_aligned_residues",
     ],
 )

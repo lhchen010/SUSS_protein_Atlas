@@ -1,8 +1,10 @@
-"""Rule 4 — classify. Label each structural edge on the BLAST-divergence spectrum.
-NOTE (io_contract R1): blast_evalue is config-driven. Lab default 1.0 (design plateau).
-core_SUSS = structurally similar (TM>=thr) but NOT BLAST-detected at this evalue.
+"""Label each structural edge on the configured BLAST-divergence spectrum.
+
+core_SUSS means the retained structural edge has no BLAST hit passing both the
+configured e-value and reciprocal sequence-coverage thresholds.
 """
 import pandas as pd
+from v3_utils import select_blast_relationships
 
 blastp   = snakemake.input.blastp
 edges_in = snakemake.input.edges
@@ -25,7 +27,10 @@ bl["qcov"] = bl["length"] / bl["qlen"].replace(0, pd.NA)
 bl["scov"] = bl["length"] / bl["slen"].replace(0, pd.NA)
 bl["min_coverage"] = bl[["qcov", "scov"]].min(axis=1)
 bl["pair"] = bl.apply(lambda r: tuple(sorted((r.q, r.t))), axis=1)
-blp = bl.sort_values("evalue").groupby("pair", as_index=False).first()
+all_blast_pairs = set(bl["pair"])
+blp = select_blast_relationships(
+    bl, evalue_threshold=EVAL, coverage_threshold=COVERAGE
+)
 
 edges = pd.read_csv(edges_in)
 edges["pair"] = edges.apply(lambda r: tuple(sorted((r.q, r.t))), axis=1)
@@ -45,12 +50,8 @@ blast_fields = blp[
     }
 )
 m = edges.merge(blast_fields, on="pair", how="left")
-m["blast_detected"] = (
-    m.blast_evalue.notna()
-    & (m.blast_evalue <= EVAL)
-    & (m.blast_min_coverage >= COVERAGE)
-)
-m["blast_any"] = m.blast_evalue.notna()
+m["blast_detected"] = m.blast_evalue.notna()
+m["blast_any"] = m["pair"].isin(all_blast_pairs)
 
 def cls(r):
     if not r.blast_detected: return "core_SUSS"

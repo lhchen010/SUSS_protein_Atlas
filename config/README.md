@@ -26,12 +26,13 @@ the actual method and recovery status in `<family>_foldtree_status.json`.
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).
 
-Version 3 has three separate relationship layers:
+Version 4 has three separate relationship layers:
 
 - `clustering:` defines full-length `F` families using global Foldseek TM score and reciprocal
   structural coverage.
 - `domain_clustering:` defines local structural-domain `D` families using Foldseek 3Di+AA
-  segment hits.
+  segment hits. The default retains links with local lDDT at least `0.5`; coverage `0.0` means
+  no minimum coverage filter, allowing a shared domain inside different full-length proteins.
 - `structural_conservation.pair_threshold:` controls the minimum fraction of FoldMason
   structure-pair subalignments that must support a column before it is colored (default `0.5`).
 - `classification:` defines sequence-homologous `S` subgroups and the SUSS divergence labels
@@ -40,3 +41,10 @@ Version 3 has three separate relationship layers:
 See [Foldseek parameters](../docs/FOLDSEEK_PARAMETERS.md) before changing these thresholds.
 The defaults are a starting point, not a replacement for reporting the effective parameters in a
 paper.
+
+`output.html_mode` controls data packaging:
+
+- `single` embeds structures and downloads for a portable offline HTML file.
+- `backend` keeps the interactive atlas in HTML and stores large PDB, ZIP, and Excel artifacts
+  under `results/downloads/` for the portal to stream on demand. This is recommended for large
+  server runs.

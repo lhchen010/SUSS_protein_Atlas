@@ -103,7 +103,7 @@ rule foldseek_domains:
         "mkdir -p {RESULTS}/tmp_fs_domain && "
         "{params.bin} easy-search {input.pdb_dir} {input.pdb_dir} "
         "{output.tsv} {RESULTS}/tmp_fs_domain "
-        "--format-output 'query,target,qstart,qend,tstart,tend,alnlen,qlen,tlen,evalue,prob,bits,lddt,fident' "
+        "--format-output 'query,target,qstart,qend,tstart,tend,alnlen,qlen,tlen,evalue,prob,bits,alntmscore,lddt,fident,qcov,tcov' "
         "--alignment-type {params.alignment_type} -e {params.evalue} -s {params.sensitivity} "
         "--max-seqs 100000 --threads {threads}; "
         "else : > {output.tsv}; fi"
@@ -120,11 +120,29 @@ rule domain_cluster:
         probability=config.get("domain_clustering", {}).get("min_probability", 0.5),
         min_aligned=config.get("domain_clustering", {}).get("min_aligned_residues", 40),
         min_coverage=config.get("domain_clustering", {}).get("min_shorter_coverage", 0.0),
+        min_lddt=config.get("domain_clustering", {}).get("min_lddt", 0.5),
+        min_alntm=config.get("domain_clustering", {}).get("min_alntm", 0.0),
         interval_overlap=config.get("domain_clustering", {}).get("interval_overlap", 0.5),
         resolution=config.get("domain_clustering", {}).get("leiden_resolution", 1.0),
         seed=config.get("domain_clustering", {}).get("leiden_seed", 42),
         min_size=config.get("domain_clustering", {}).get("min_family_size", 2)
     script: "scripts/domain_cluster.py"
+
+rule domain_workbench:
+    input:
+        members=f"{RESULTS}/domain_members.csv",
+        edges=f"{RESULTS}/domain_edges.csv",
+        qc=f"{RESULTS}/qc.csv",
+        seqs=f"{RESULTS}/seqs.fasta",
+        pdb_dir=PDB_DIR
+    output:
+        json=f"{RESULTS}/domain_workbench.json"
+    params:
+        mafft=TOOLS.get("mafft", "mafft"),
+        fasttree=TOOLS.get("fasttree", "FastTree"),
+        usalign=TOOLS.get("usalign", "USalign")
+    threads: 8
+    script: "scripts/domain_workbench.py"
 
 # checkpoint: family count is decided here; downstream per-family targets expand from it
 checkpoint cluster:
@@ -433,6 +451,7 @@ rule assemble:
             domain_families=f"{RESULTS}/domain_families.csv",
             domain_edges=f"{RESULTS}/domain_edges.csv",
             domain_bridges=f"{RESULTS}/domain_cross_edges.csv",
+            domain_workbench=f"{RESULTS}/domain_workbench.json",
             subgroups=f"{RESULTS}/sequence_subgroups.csv",
             structure_db=f"{RESULTS}/structure_db/atlas.complete.json",
             structure_index=f"{RESULTS}/structure_search_index.csv"

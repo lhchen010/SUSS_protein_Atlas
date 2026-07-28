@@ -37,6 +37,37 @@ def coverage(alnlen: object, length: object) -> float:
     return aligned / total if total > 0 else math.nan
 
 
+def select_blast_relationships(
+    table: pd.DataFrame,
+    *,
+    evalue_threshold: float,
+    coverage_threshold: float,
+) -> pd.DataFrame:
+    """Select the best HSP that passes both relationship thresholds."""
+    data = table.copy()
+    if data.empty:
+        data["pair"] = pd.Series(dtype=object)
+        return data
+    data["evalue"] = pd.to_numeric(data["evalue"], errors="coerce")
+    data["bitscore"] = pd.to_numeric(data["bitscore"], errors="coerce")
+    data["min_coverage"] = pd.to_numeric(
+        data["min_coverage"], errors="coerce"
+    )
+    data = data[
+        (data.evalue <= float(evalue_threshold))
+        & (data.min_coverage >= float(coverage_threshold))
+    ].copy()
+    data["pair"] = [
+        tuple(sorted((str(query), str(target))))
+        for query, target in zip(data.q, data.t)
+    ]
+    return (
+        data.sort_values(["evalue", "bitscore"], ascending=[True, False])
+        .drop_duplicates("pair", keep="first")
+        .reset_index(drop=True)
+    )
+
+
 def whole_fold_edges(
     table: pd.DataFrame,
     *,
@@ -151,6 +182,8 @@ def domain_segments(
     probability_threshold: float,
     min_aligned_residues: int,
     min_shorter_coverage: float,
+    min_lddt: float = 0.0,
+    min_alntm: float = 0.0,
     interval_overlap: float = 0.5,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Convert local Foldseek hits into segment nodes and segment-to-segment edges."""
@@ -169,9 +202,14 @@ def domain_segments(
         "evalue",
         "prob",
         "bits",
+        "alntmscore",
         "lddt",
         "fident",
+        "qcov",
+        "tcov",
     ):
+        if column not in data:
+            data[column] = 0.0
         data[column] = pd.to_numeric(data[column], errors="coerce")
     data["shorter_coverage"] = (
         data.alnlen / data[["qlen", "tlen"]].min(axis=1)
@@ -181,6 +219,8 @@ def domain_segments(
         & (data.prob >= float(probability_threshold))
         & (data.alnlen >= int(min_aligned_residues))
         & (data.shorter_coverage >= float(min_shorter_coverage))
+        & (data.lddt >= float(min_lddt))
+        & (data.alntmscore >= float(min_alntm))
     ].copy()
     if data.empty:
         return (
@@ -192,8 +232,11 @@ def domain_segments(
                     "evalue",
                     "prob",
                     "bits",
+                    "alntmscore",
                     "lddt",
                     "fident",
+                    "qcov",
+                    "tcov",
                     "alnlen",
                     "shorter_coverage",
                 ]
@@ -258,8 +301,11 @@ def domain_segments(
             "evalue",
             "prob",
             "bits",
+            "alntmscore",
             "lddt",
             "fident",
+            "qcov",
+            "tcov",
             "alnlen",
             "shorter_coverage",
         ]

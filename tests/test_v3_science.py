@@ -12,6 +12,7 @@ from v3_utils import (
     domain_segments,
     foldmason_column_scores,
     merge_intervals,
+    select_blast_relationships,
     whole_fold_edges,
 )
 
@@ -58,6 +59,27 @@ def test_whole_fold_edges_require_tm_and_reciprocal_coverage():
     assert edges.iloc[0].min_coverage == 0.8
 
 
+def test_blast_relationship_uses_best_hit_that_passes_coverage():
+    hits = pd.DataFrame([
+        {
+            "q": "A", "t": "B", "evalue": 1e-30, "bitscore": 200,
+            "min_coverage": 0.2, "pident": 60,
+        },
+        {
+            "q": "A", "t": "B", "evalue": 1e-20, "bitscore": 180,
+            "min_coverage": 0.8, "pident": 40,
+        },
+    ])
+
+    selected = select_blast_relationships(
+        hits, evalue_threshold=1e-3, coverage_threshold=0.5
+    )
+
+    assert len(selected) == 1
+    assert selected.iloc[0].evalue == 1e-20
+    assert selected.iloc[0].pident == 40
+
+
 def test_interval_merging_preserves_distinct_domains():
     merged = merge_intervals([(10, 80), (15, 75), (180, 250), (190, 245)])
 
@@ -98,6 +120,42 @@ def test_domain_segments_allow_a_local_domain_in_long_proteins():
     assert set(segments.acc) == {"A", "B"}
     assert len(edges) == 1
     assert edges.iloc[0].alnlen == 70
+
+
+def test_domain_segments_reject_low_local_lddt_even_with_high_probability():
+    table = pd.DataFrame(
+        [
+            {
+                "query": "A.pdb",
+                "target": "B.pdb",
+                "qstart": 20,
+                "qend": 89,
+                "tstart": 300,
+                "tend": 369,
+                "alnlen": 70,
+                "qlen": 500,
+                "tlen": 600,
+                "evalue": 1e-12,
+                "prob": 0.99,
+                "bits": 120,
+                "alntmscore": 0.4,
+                "lddt": 0.35,
+                "fident": 0.1,
+            }
+        ]
+    )
+
+    segments, edges = domain_segments(
+        table,
+        evalue_threshold=1e-3,
+        probability_threshold=0.5,
+        min_aligned_residues=40,
+        min_shorter_coverage=0.0,
+        min_lddt=0.5,
+    )
+
+    assert segments.empty
+    assert edges.empty
 
 
 def test_domain_coverage_is_bounded_and_cross_family_bridges_are_aggregated():
