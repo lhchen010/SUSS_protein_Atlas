@@ -290,8 +290,8 @@ Generated artifacts:
 
 ```text
 results/cor_suss_atlas.html
-size:   105,406,092 bytes (101 MiB)
-sha256: b339566fc7d794784f4d0775e17d9c2098822ed989cad6f652e780aa6822b45e
+size:   105,406,185 bytes (101 MiB)
+sha256: 2c53a2b405b404d5177662e2c6338a3fa44ee0da3f3701676591c37ae153613d
 ```
 
 `results/downloads/` contains 354 workbooks and 105 multi-PDB family ZIP archives, 459 files in
@@ -328,3 +328,9 @@ Pre-v4 rollback copies on 4070:
 /home/claude/suss_portal/suss_engine.tar.gz.pre-20260728-v4.0.0
 /home/claude/suss_portal/suss_portal.py.pre-20260728-v4.0.0
 ```
+
+### v4.0.1 presentation patch
+
+The deployed follow-up patch `v4.0.1` changes no scientific data or thresholds. It allows the
+search result count to wrap beneath the search box below 700 px viewport width, removing the
+small horizontal overflow found during final mobile browser validation.
