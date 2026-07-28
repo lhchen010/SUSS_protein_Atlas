@@ -88,6 +88,9 @@ output:
   allow_fallback_html: false
   project_title: ""
 
+pocket:
+  p2rank_profile: alphafold
+
 # ---- Tool paths as installed on the reference machine ----
 tools:
   foldseek: /home/user/miniconda3/bin/foldseek

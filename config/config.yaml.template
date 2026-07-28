@@ -97,6 +97,11 @@ output:
 
 # ---- Tool paths — EDIT THESE for your machine ----
 # Conda-installed tools (see environment.yml) resolve on $PATH, so the bare command name
+# P2Rank's AlphaFold profile does not interpret the PDB B-factor field as an
+# experimental B-factor. AlphaFold structures store pLDDT in that field.
+pocket:
+  p2rank_profile: alphafold        # alphafold (recommended here) or default
+
 # works after `conda activate suss-atlas`. Tools you install elsewhere: give the absolute path.
 # Platform: all conda tools below have macOS builds (osx-64 + Apple Silicon). The one
 # Linux-only tool is InterProScan (leave blank on macOS — see README "Annotation on macOS").

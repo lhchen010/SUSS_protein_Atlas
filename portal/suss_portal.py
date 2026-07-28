@@ -213,6 +213,16 @@ def form_page(msg_html=""):
           <div class=rng><input type=range name=domain_coverage min=0 max=1 step=0.05 value=0 oninput="this.nextElementSibling.textContent=this.value"><b>0</b></div>
         </fieldset>
       </details>
+      <details><summary><b>Advanced: pocket prediction</b></summary>
+        <fieldset style="margin-top:8px"><legend>P2Rank structure profile</legend>
+          <label>Input structure type</label>
+          <select name=p2rank_profile>
+            <option value=alphafold selected>AlphaFold / predicted structures (recommended)</option>
+            <option value=default>Experimental PDB structures</option>
+          </select>
+          <div class=hint>AlphaFold PDB files store pLDDT in the B-factor column. The AlphaFold profile prevents P2Rank from interpreting pLDDT as an experimental B-factor feature. fpocket is run independently with the same coordinates.</div>
+        </fieldset>
+      </details>
       <button class=go type=submit>Validate &amp; build atlas</button>
       <div class=hint style="margin-top:8px">Files are validated for format before the pipeline runs. A malformed RNAseq workbook or empty structure set is rejected with a clear error.</div>
     </form>"""
@@ -233,6 +243,7 @@ def _params_block(j):
         ("Colletotrichum", "yes" if m.get("is_colleto") else "no (outgroup)"),
         ("Foldseek TM threshold", m.get("tm")),
         ("Reciprocal structural coverage", m.get("coverage")),
+        ("P2Rank structure profile", m.get("p2rank_profile", "alphafold")),
         ("Leiden resolution", m.get("res")),
         ("Min family size", m.get("minfam")),
         ("BLAST e-value", m.get("evalue")),
@@ -697,6 +708,8 @@ def _write_config(eng, meta):
     cfg.setdefault("classification", {}).update(
         blast_evalue=meta["evalue"],
         min_reciprocal_coverage=meta["blast_coverage"])
+    cfg.setdefault("pocket", {}).update(
+        p2rank_profile=meta.get("p2rank_profile", "alphafold"))
     st = cfg.setdefault("steps", {})
     st.update(qc=True, cluster=True, cards=True, atlas=True, rnaseq=meta["rnaseq_mode"],
               **{k: bool(v) for k, v in steps_in.items()})
@@ -1045,6 +1058,11 @@ class H(BaseHTTPRequestHandler):
             domain_lddt=float(_field(form, "domain_lddt", "0.5")),
             domain_alntm=float(_field(form, "domain_alntm", "0")),
             domain_coverage=float(_field(form, "domain_coverage", "0")),
+            p2rank_profile=(
+                _field(form, "p2rank_profile", "alphafold")
+                if _field(form, "p2rank_profile", "alphafold") in ("alphafold", "default")
+                else "alphafold"
+            ),
             project_title=_field(form, "project_title", "").replace('"', "'"),
             rnaseq_xlsx=("input/rnaseq.xlsx" if rnaseq_given else ""),
             rnaseq_mode=(("true" if ck("rnaseq_step") else "false") if rnaseq_given else "false"),

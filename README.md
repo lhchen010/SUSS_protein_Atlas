@@ -12,7 +12,9 @@ structure-defined families, labels their sequence-divergence spectrum, and integ
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
 optional expression into an interactive atlas. Version 4 separates three questions that should
 not be collapsed into one clustering label: full-length fold families (`F`), local structural
-domain families (`D`), and sequence-homologous subgroups (`S`). Unclustered proteins remain
+domain families (`D`), and sequence-homologous subgroups (`S`). Version 4.1 makes P2Rank
+reference-safe, defaults predicted structures to P2Rank's AlphaFold profile, restores
+full-family RNA-seq plots, and adds selectable D-family superpositions. Unclustered proteins remain
 independent singleton records with complete single-protein evidence. Domain families now have
 the same evidence-oriented workbench pattern as full-length families, and portal atlases load
 large structures and downloads on demand.
@@ -129,8 +131,11 @@ The atlas has three primary views:
 - **Full-length families** searches and highlights global fold-defined `F` families.
 - **Domain families** provides a D-family overview network. Edges summarize retained local
   Foldseek hits that bridge two D communities. Opening a D family reveals its segment-level
-  similarity network, US-align hub superposition, local Foldseek lDDT/probability/alignment
-  evidence, MAFFT segment MSA and sequence tree, the matched region in full-structure context,
+  similarity network, selectable US-align hub superposition, local Foldseek
+  lDDT/probability/alignment evidence, MAFFT segment MSA and sequence tree, and a linear
+  parent-protein map that marks the matched coordinates. Superposition defaults to the focused
+  segment plus the D-family hub and can retain the focused full-length parent as context. The
+  workbench also includes the matched region in full-structure context,
   coordinate-overlapping Pfam/InterPro calls, and protein-level annotation, pocket, EffectorP,
   DeepTMHMM, Foldseek database-hit, and RNA-seq evidence.
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
@@ -264,7 +269,7 @@ unless all required evidence is complete.
 | [docs/FOLDSEEK_PARAMETERS.md](docs/FOLDSEEK_PARAMETERS.md) | Global fold, local domain, coverage, score, and scaling guidance |
 | [examples/EXPECTED.md](examples/EXPECTED.md) | Reproducible 100-protein acceptance baseline |
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
-| [docs/CLAUDE_FOR_SCIENCE_V4.0.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.0.0_HANDOFF.md) | v4 scientific model, implementation, validation, deployment evidence, and Claude acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md) | v4.1 pocket correctness, RNA-seq repair, selectable domain superposition, deployment evidence, and Claude acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses

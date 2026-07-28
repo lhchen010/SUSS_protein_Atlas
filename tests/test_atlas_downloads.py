@@ -134,8 +134,11 @@ def test_family_workbook_contains_complete_evidence_sheets():
             "p2rank_status": "complete",
             "fpocket": {"top_score": 2.1, "n_pockets": 1, "lining_residues": [1, 2],
                         "pockets": [{"pocket_id": 1, "score": 2.1, "lining_residues": [1, 2]}]},
-            "p2rank": {"top_score": 0.8, "n_pockets": 1, "lining_residues": [2, 3],
-                       "pockets": [{"pocket_id": 1, "score": 0.8, "lining_residues": [2, 3]}]},
+            "p2rank_profile": "alphafold",
+            "p2rank": {"top_score": 0.8, "top_probability": 0.73, "n_pockets": 1,
+                       "lining_residues": [2, 3],
+                       "pockets": [{"pocket_id": 1, "score": 0.8, "probability": 0.73,
+                                    "lining_residues": [2, 3]}]},
         },
         pocket_raw={
             "fpocket_pockets": pd.DataFrame([{"pocket_id": 1, "score": 2.1, "volume": 42.0}]),
@@ -164,6 +167,9 @@ def test_family_workbook_contains_complete_evidence_sheets():
     }.issubset(workbook.sheet_names)
     pockets = workbook.parse("pocket_predictions")
     assert set(pockets["method"]) == {"fpocket", "p2rank"}
+    assert pockets.loc[pockets.method == "p2rank", "probability"].iloc[0] == 0.73
+    pocket_summary = workbook.parse("pocket_summary").set_index("method")
+    assert pocket_summary.loc["p2rank", "profile"] == "alphafold"
     annotation = workbook.parse("annotation")
     assert list(annotation["acc"]) == ["A1", "A2"]
     assert {"annotation_status", "pfam_domains", "pdb_hit", "afdbsp_name",
@@ -388,7 +394,10 @@ def test_old_pocket_results_are_enriched_from_raw_outputs():
         pd.DataFrame([
             {"rank": 1, "score": 0.9, "residue_ids": "A_2 A_3"},
             {"rank": 2, "score": 0.5, "residue_ids": "A_8"},
-        ]).to_csv(p2dir / "test_predictions.csv", index=False)
+        ]).to_csv(p2dir / "cor_A1.pdb_predictions.csv", index=False)
+        pd.DataFrame([
+            {"rank": 1, "score": 99.0, "residue_ids": "A_99"},
+        ]).to_csv(p2dir / "cor_OLD.pdb_predictions.csv", index=False)
         (fpdir.parent / "A1_info.txt").write_text(
             "Pocket 1 :\n Score : 3.2\nPocket 2 :\n Score : 1.1\n"
         )
@@ -400,11 +409,27 @@ def test_old_pocket_results_are_enriched_from_raw_outputs():
         )
 
         assert len(enriched["p2rank"]["pockets"]) == 2
+        assert enriched["p2rank"]["top_score"] == 0.9
+        assert enriched["p2rank"]["lining_residues"] == [2, 3]
         assert len(enriched["fpocket"]["pockets"]) == 2
         assert enriched["fpocket"]["pockets"][0]["lining_residues"] == [1, 2]
         raw = html_builder._pocket_raw_tables(tmp, "F0", enriched)
         assert list(raw["p2rank_pockets"].columns) == ["rank", "score", "residue_ids"]
+        assert raw["p2rank_pockets"].iloc[0]["score"] == 0.9
         assert set(raw["fpocket_pockets"]["pocket_id"]) == {1, 2}
+
+
+def test_full_length_family_rnaseq_uses_run_level_expression_table():
+    expression = pd.DataFrame([
+        {"acc": "A1", "control": 1.0, "infection": 4.0},
+        {"acc": "A2", "control": 2.0, "infection": 8.0},
+        {"acc": "OTHER", "control": 9.0, "infection": 9.0},
+    ])
+
+    subset = html_builder._family_expression(expression, ["A2", "A1"])
+
+    assert set(subset["acc"]) == {"A1", "A2"}
+    assert "OTHER" not in set(subset["acc"])
 
 
 def test_renderer_uses_aligned_payload_and_zip_download():
@@ -506,6 +531,12 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert renderer.count("function showDomain(id)") == 1
     assert "function showDomainSegment" in renderer
     assert "function renderDomainStructure" in renderer
+    assert "function toggleDomainSelection" in renderer
+    assert "function selectDomainMembers" in renderer
+    assert "function dlDomainSuperposition" in renderer
+    assert 'Superpose selected (' in renderer
+    assert "Parent context" in renderer
+    assert "domain-architecture" in renderer
     assert "DOMAIN_EDGES" in renderer
     assert "DNET.edges" in renderer
     assert "DOMAIN_FAMILIES" in renderer
@@ -521,6 +552,28 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "except subprocess.TimeoutExpired" in portal
     assert "shutil.rmtree(search_dir, ignore_errors=True)" in portal
     assert "Domain-aware Foldseek" in portal
+
+
+def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
+    snakefile = (ROOT / "workflow" / "Snakefile").read_text()
+    pocket_script = (ROOT / "workflow" / "scripts" / "sasa_pocket.py").read_text()
+    portal = (ROOT / "portal" / "suss_portal.py").read_text()
+
+    assert 'get("p2rank_profile", "alphafold")' in snakefile
+    assert 'p2cmd.extend(["-c", p2rank_profile])' in pocket_script
+    assert "shutil.rmtree(out_dir, ignore_errors=True)" in pocket_script
+    assert "expected one P2Rank predictions CSV" in pocket_script
+    assert "AlphaFold / predicted structures" in portal
+    assert 'cfg.setdefault("pocket", {}).update' in portal
+
+
+def test_full_length_rnaseq_renderer_has_explicit_missing_state():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text(encoding="utf-8")
+
+    assert "RNA-seq data were not available for this family." in renderer
+    assert "innerHTML=a.rna_svg?" in renderer
 
 
 def test_structural_color_direction_and_missing_coverage_are_explicit():

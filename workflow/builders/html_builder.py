@@ -364,6 +364,45 @@ def _structures_zip_b64(fam, structures):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _p2rank_prediction_csv(results_dir, fam, ref):
+    """Return the P2Rank table for the current reference, never a stale hub."""
+    candidates = sorted(glob.glob(
+        os.path.join(results_dir, "p2rank", fam, "out", "*_predictions.csv")
+    ))
+    if not candidates:
+        return None
+    matches = [
+        path for path in candidates
+        if ref and (
+            os.path.basename(path).endswith(f"{ref}.pdb_predictions.csv")
+            or os.path.basename(path).endswith(f"{ref}_predictions.csv")
+        )
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"{fam}: multiple P2Rank prediction tables match reference {ref}"
+        )
+    # Older single-file runs did not consistently preserve the source accession
+    # in the output name. They are safe only when there is no competing stale file.
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _family_expression(expression_all, members):
+    """Subset the run-level RNA-seq table for one full-length family."""
+    if (
+        expression_all is None
+        or "acc" not in expression_all.columns
+        or not members
+    ):
+        return None
+    subset = expression_all[
+        expression_all["acc"].astype(str).isin(set(map(str, members)))
+    ].copy()
+    return subset if len(subset) else None
+
+
 def _enrich_pocket_entry(results_dir, fam, entry):
     """Backfill all pocket predictions from raw outputs for pre-v1.0.2 runs."""
     entry = json.loads(json.dumps(entry or {}))
@@ -371,9 +410,9 @@ def _enrich_pocket_entry(results_dir, fam, entry):
 
     p2 = entry.get("p2rank", {}) or {}
     if not p2.get("pockets"):
-        candidates = glob.glob(os.path.join(results_dir, "p2rank", fam, "out", "*_predictions.csv"))
-        if candidates:
-            table = pd.read_csv(candidates[0])
+        prediction_csv = _p2rank_prediction_csv(results_dir, fam, ref)
+        if prediction_csv:
+            table = pd.read_csv(prediction_csv)
             table.columns = [str(c).strip() for c in table.columns]
             predictions = []
             for idx, pred in table.iterrows():
@@ -430,13 +469,13 @@ def _enrich_pocket_entry(results_dir, fam, entry):
 def _pocket_raw_tables(results_dir, fam, entry):
     """Load detector-native pocket tables for lossless workbook export."""
     tables = {}
-    p2_candidates = glob.glob(os.path.join(results_dir, "p2rank", fam, "out", "*_predictions.csv"))
-    if p2_candidates:
-        p2_table = pd.read_csv(p2_candidates[0])
+    ref = (entry or {}).get("ref", "")
+    prediction_csv = _p2rank_prediction_csv(results_dir, fam, ref)
+    if prediction_csv:
+        p2_table = pd.read_csv(prediction_csv)
         p2_table.columns = [str(c).strip() for c in p2_table.columns]
         tables["p2rank_pockets"] = p2_table
 
-    ref = (entry or {}).get("ref", "")
     info = os.path.join(results_dir, "fpocket", fam, f"{ref}_out", f"{ref}_info.txt") if ref else ""
     if info and os.path.exists(info):
         text = open(info, encoding="utf-8", errors="replace").read()
@@ -724,17 +763,20 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
                 summaries.append(dict(
                     family=fam, reference=pocket_entry.get("ref", ""), method=method,
                     status=pocket_entry.get(f"{method}_status", "not_run"),
+                    profile=(pocket_entry.get("p2rank_profile") if method == "p2rank" else None),
                     n_pockets=result.get("n_pockets"), top_score=result.get("top_score"),
+                    top_probability=result.get("top_probability"),
                     top_lining_residues=" ".join(map(str, result.get("lining_residues", [])))))
                 for pred in result.get("pockets", []):
                     predictions.append(dict(
                         family=fam, reference=pocket_entry.get("ref", ""), method=method,
                         pocket_id=pred.get("pocket_id"), score=pred.get("score"),
+                        probability=pred.get("probability"),
                         n_residues=len(pred.get("lining_residues", [])),
                         lining_residues=" ".join(map(str, pred.get("lining_residues", [])))))
             pd.DataFrame(summaries).to_excel(xl, sheet_name="pocket_summary", index=False)
             pd.DataFrame(predictions, columns=["family", "reference", "method", "pocket_id", "score",
-                                                      "n_residues", "lining_residues"]).to_excel(
+                                                      "probability", "n_residues", "lining_residues"]).to_excel(
                 xl, sheet_name="pocket_predictions", index=False)
             residue_rows = []
             for pred in predictions:
@@ -954,6 +996,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         tm = load_csv(os.path.join(fd, f"{fam}_TM.csv"))
         idm = load_csv(os.path.join(fd, f"{fam}_ID.csv"))
         exp = load_csv(os.path.join(fd, f"{fam}_expression.csv"))
+        if exp is None:
+            exp = _family_expression(expression_all, members)
         tm_stats = _matrix_pair_stats(tm)
         id_stats = _matrix_pair_stats(idm)
         retained_tm = _finite_float(
@@ -1147,6 +1191,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         ex.setdefault("pocket_score", None); ex.setdefault("n_pocket", None)
         ex.setdefault("n_cys", 0)
         pk = _enrich_pocket_entry(results_dir, fam, pockets.get(fam, {}))
+        pk.setdefault(
+            "p2rank_profile",
+            config.get("pocket", {}).get("p2rank_profile", "unknown"),
+        )
         p2 = pk.get("p2rank", {}); fp = pk.get("fpocket", {})
         if p2:
             ex.update(p2rank_resi=p2.get("lining_residues", []), p2rank_score=p2.get("top_score"),
@@ -1390,6 +1438,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
 
             pocket_entry = _enrich_pocket_entry(
                 results_dir, accession, pockets.get(accession, {})
+            )
+            pocket_entry.setdefault(
+                "p2rank_profile",
+                config.get("pocket", {}).get("p2rank_profile", "unknown"),
             )
             p2rank = pocket_entry.get("p2rank", {}) or {}
             fpocket = pocket_entry.get("fpocket", {}) or {}
