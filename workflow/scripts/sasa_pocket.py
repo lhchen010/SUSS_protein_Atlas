@@ -17,6 +17,7 @@ qc_csv   = snakemake.input.qc
 out_sasa = snakemake.output.sasa
 out_pock = snakemake.output.pockets
 p2rank   = snakemake.params.p2rank
+p2rank_profile = str(snakemake.params.p2rank_profile or "").strip().lower()
 fpocket  = snakemake.params.fpocket
 java_env = snakemake.params.java_env
 enabled  = bool(snakemake.params.enabled)
@@ -71,6 +72,7 @@ for fam, ref in targets:
         "ref": ref,
         "pocket_status": "not_run" if not enabled else ("complete" if P2RANK and FPOCKET else "partial"),
         "p2rank_status": "pending" if P2RANK else "not_run",
+        "p2rank_profile": p2rank_profile or "default",
         "fpocket_status": "pending" if FPOCKET else "not_run",
     }
     if not enabled:
@@ -78,16 +80,30 @@ for fam, ref in targets:
         continue
     # P2Rank
     if P2RANK:
-        wd = os.path.join(os.path.dirname(out_sasa), "p2rank", fam); os.makedirs(wd, exist_ok=True)
+        wd = os.path.join(os.path.dirname(out_sasa), "p2rank", fam)
+        out_dir = os.path.join(wd, "out")
+        os.makedirs(wd, exist_ok=True)
+        shutil.rmtree(out_dir, ignore_errors=True)
         ds = os.path.join(wd, f"{fam}.ds"); open(ds, "w").write(os.path.abspath(src) + "\n")
-        p2cmd = [P2RANK, "predict", ds, "-o", os.path.join(wd, "out")]
+        p2cmd = [P2RANK, "predict", ds, "-o", out_dir]
+        if p2rank_profile and p2rank_profile != "default":
+            p2cmd.extend(["-c", p2rank_profile])
         if CONDA:
             p2cmd = [CONDA, "run", "-n", java_env, *p2cmd]
         subprocess.run(p2cmd, capture_output=True, text=True, timeout=600, check=True)
-        pcsv = glob.glob(os.path.join(wd, "out", "*_predictions.csv"))
-        if not pcsv:
-            raise RuntimeError(f"{fam}: P2Rank completed without predictions CSV")
-        pp = pd.read_csv(pcsv[0]); pp.columns = [c.strip() for c in pp.columns]
+        pcsv = sorted(glob.glob(os.path.join(out_dir, "*_predictions.csv")))
+        exact = [
+            path for path in pcsv
+            if (
+                os.path.basename(path).endswith(f"{ref}.pdb_predictions.csv")
+                or os.path.basename(path).endswith(f"{ref}_predictions.csv")
+            )
+        ]
+        if len(exact) != 1:
+            raise RuntimeError(
+                f"{fam}: expected one P2Rank predictions CSV for {ref}, found {len(exact)}"
+            )
+        pp = pd.read_csv(exact[0]); pp.columns = [c.strip() for c in pp.columns]
         entry["p2rank_status"] = "complete"
         if len(pp):
             all_pockets = []

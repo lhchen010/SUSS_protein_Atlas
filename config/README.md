@@ -23,6 +23,12 @@ Then edit `config/config.yaml`:
 fall back to midpoint rooting only when MAD output is missing or invalid. Every family records
 the actual method and recovery status in `<family>_foldtree_status.json`.
 
+`pocket.p2rank_profile` selects the P2Rank feature profile. Use `alphafold` for the
+predicted structures expected by this workflow. AlphaFold PDB files store pLDDT in the
+B-factor column, so the generic `default` profile is not appropriate unless the input
+contains experimental B-factors. Use `default` only for experimental PDB structures.
+The effective profile is saved in `results/used_config.yaml`.
+
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).
 

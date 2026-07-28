@@ -85,6 +85,9 @@ output:
   allow_fallback_html: false
   project_title: "SUSS Atlas — bundled example (100 proteins)"
 
+pocket:
+  p2rank_profile: alphafold
+
 tools:
   foldseek: foldseek
   usalign: USalign

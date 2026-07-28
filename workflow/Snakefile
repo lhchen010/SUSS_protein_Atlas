@@ -194,6 +194,7 @@ rule sasa_pocket:
     input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv", members=f"{RESULTS}/members.csv"
     output: sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json"
     params: enabled=on("pocket"), p2rank=TOOLS.get("p2rank", ""),
+            p2rank_profile=config.get("pocket", {}).get("p2rank_profile", "alphafold"),
             fpocket=TOOLS.get("fpocket", "fpocket"), java_env=TOOLS.get("p2rank_java_env", ""),
             conda=TOOLS.get("conda", "conda")
     script: "scripts/sasa_pocket.py"
