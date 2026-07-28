@@ -5,7 +5,7 @@ import os
 import igraph as ig
 import pandas as pd
 
-from v3_utils import coverage, protein_id
+from v3_utils import coverage, protein_id, select_blast_relationships
 
 
 columns = [
@@ -29,16 +29,11 @@ blast["scov"] = [
     coverage(aligned, length) for aligned, length in zip(blast.alnlen, blast.slen)
 ]
 blast["min_coverage"] = blast[["qcov", "scov"]].min(axis=1)
-blast = blast[
-    (pd.to_numeric(blast.evalue, errors="coerce") <= float(snakemake.params.evalue))
-    & (blast.min_coverage >= float(snakemake.params.coverage))
-].copy()
-blast["pair"] = [
-    tuple(sorted((query, target))) for query, target in zip(blast.q, blast.t)
-]
-blast = blast.sort_values(["evalue", "bitscore"], ascending=[True, False]).groupby(
-    "pair", as_index=False
-).first()
+blast = select_blast_relationships(
+    blast,
+    evalue_threshold=float(snakemake.params.evalue),
+    coverage_threshold=float(snakemake.params.coverage),
+)
 
 members = pd.read_csv(snakemake.input.members)
 rows = []

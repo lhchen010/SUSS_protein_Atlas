@@ -10,10 +10,12 @@ structurally similar protein families in secreted effector repertoires.**
 SUSS Protein Atlas starts from predicted protein structures for one strain, builds
 structure-defined families, labels their sequence-divergence spectrum, and integrates independent
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
-optional expression into an interactive atlas. Version 3 separates three questions that should
+optional expression into an interactive atlas. Version 4 separates three questions that should
 not be collapsed into one clustering label: full-length fold families (`F`), local structural
 domain families (`D`), and sequence-homologous subgroups (`S`). Unclustered proteins remain
-independent singleton records with complete single-protein evidence.
+independent singleton records with complete single-protein evidence. Domain families now have
+the same evidence-oriented workbench pattern as full-length families, and portal atlases load
+large structures and downloads on demand.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -33,7 +35,7 @@ independent singleton records with complete single-protein evidence.
 | How is structural conservation scored? | Official FoldMason per-column LDDT; columns lacking the configured pair support remain unscored |
 | What biological evidence is integrated? | Structural conservation, Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, sequence tree, annotation, and optional RNA-seq |
 | How are singletons handled? | As independent proteins with sequence viewer/download, structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
-| What is delivered? | Interactive HTML with F/D/singleton workspaces, a searchable Foldseek database, Excel summaries, machine-readable tables, and provenance |
+| What is delivered? | Interactive F/D/singleton workspaces, a searchable Foldseek database, lazy server artifacts or self-contained HTML, Excel summaries, machine-readable tables, and provenance |
 | How is it orchestrated? | Snakemake checkpoint expansion after the family count becomes known |
 
 ## Workflow
@@ -50,6 +52,7 @@ flowchart LR
     QC --> LOCAL["Local Foldseek<br/>3Di+AA segment search"]
     LOCAL --> DGRAPH["Segment graph"]
     DGRAPH --> D["D families<br/>shared structural domains"]
+    D --> DWB["Domain workbench<br/>US-align superposition<br/>MAFFT + sequence tree"]
 
     F --> FM["FoldMason AA + 3Di MSA"]
     FM --> SCONS["Structural conservation"]
@@ -63,7 +66,7 @@ flowchart LR
 
     QC --> SHARED["Annotation, pockets, ESM,<br/>DeepTMHMM, RNA-seq"]
     F --> ATLAS["Interactive atlas + Excel"]
-    D --> ATLAS
+    DWB --> ATLAS
     SINGLE --> ATLAS
     SCONS --> ATLAS
     FT --> ATLAS
@@ -75,6 +78,7 @@ flowchart LR
     QC --> DB["Atlas Foldseek database"]
     DB --> SEARCH["Uploaded structure search"]
     SEARCH --> ATLAS
+    ATLAS --> LAZY["Portal artifact layer<br/>structures, ZIP, Excel on demand"]
 
     classDef input fill:#eaf2f8,stroke:#3f6f8f,color:#17212b;
     classDef structure fill:#e8f4ec,stroke:#3e7f58,color:#17212b;
@@ -83,9 +87,9 @@ flowchart LR
     classDef output fill:#edf0f3,stroke:#5f707a,color:#17212b;
     class INPUT,QC input;
     class GLOBAL,FGRAPH,F,FM,SCONS,FT,USA,DB,SEARCH structure;
-    class LOCAL,DGRAPH,D domain;
+    class LOCAL,DGRAPH,D,DWB domain;
     class BLAST,S,MAFFT,R4S,STREE sequence;
-    class SINGLE,SHARED,ATLAS output;
+    class SINGLE,SHARED,ATLAS,LAZY output;
 ```
 
 The diagram above shows the scientific data flow. The exact rule-level graph remains available
@@ -107,11 +111,13 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/domain_families.csv` / `domain_members.csv` | Local structural-domain family summaries and protein segment coordinates |
 | `results/domain_edges.csv` / `domain_cross_edges.csv` | Segment-level local Foldseek evidence and aggregated structural bridges between D families |
+| `results/domain_workbench.json` | Per-D-family hub, segment sequences, MAFFT alignment, sequence tree, US-align transforms, and fit statistics |
 | `results/sequence_subgroups.csv` | Sequence-homologous subgroups nested within full-length structural families |
 | `results/structure_db/atlas*` | Foldseek database used by the portal structure-search endpoint |
 | `results/structure_search_index.csv` | Protein-to-F/D/S/singleton lookup table for structure-search results |
 | `results/all_families_master.csv` | Machine-readable integrated family table |
 | `results/member_annotation.csv` | Per-protein annotation values and component execution states |
+| `results/downloads/` | Server-backed family workbooks and structure ZIP files when `output.html_mode: backend` |
 | `results/families/<family>/` | Workbook and files for Foldseek/US-align, BLAST, FoldMason AA/3Di MSA, MAFFT MSA, structural and evolutionary conservation, structural/sequence trees, pockets, annotation, structures, and RNA-seq |
 | Singleton downloads | Mature-sequence FASTA plus an evidence workbook with annotation, Foldseek PDB100/AFDB hits and TM scores, pockets, and RNA-seq; family-only matrices, MSA, FoldTree, conservation, and superposition are intentionally absent |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
@@ -123,9 +129,10 @@ The atlas has three primary views:
 - **Full-length families** searches and highlights global fold-defined `F` families.
 - **Domain families** provides a D-family overview network. Edges summarize retained local
   Foldseek hits that bridge two D communities. Opening a D family reveals its segment-level
-  similarity network, local Foldseek lDDT/probability/alignment evidence, the matched region in
-  full-structure context, coordinate-overlapping Pfam/InterPro calls, and protein-level
-  annotation, pocket, EffectorP, DeepTMHMM, Foldseek database-hit, and RNA-seq evidence.
+  similarity network, US-align hub superposition, local Foldseek lDDT/probability/alignment
+  evidence, MAFFT segment MSA and sequence tree, the matched region in full-structure context,
+  coordinate-overlapping Pfam/InterPro calls, and protein-level annotation, pocket, EffectorP,
+  DeepTMHMM, Foldseek database-hit, and RNA-seq evidence.
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
   pockets, and transmembrane helices. Selecting a row opens structure, pocket, ESM, RNA-seq, and
   direct annotation evidence for that protein.
@@ -141,7 +148,8 @@ A singleton exposes its one mature sequence; pairwise family analyses are omitte
 
 The portal also accepts a PDB or mmCIF query after a run completes. It searches that run's
 Foldseek database and maps each hit directly to its F family or singleton, D-family memberships,
-and S subgroup.
+and S subgroup. Result accessions and family identifiers link directly back to the corresponding
+atlas workbench.
 
 All three views search locally without a server round trip. Plain text matches accessions, annotations,
 InterPro/Pfam terms, Foldseek PDB100 and AFDB/Swiss-Prot hits, EffectorP calls, DeepTMHMM results,
@@ -225,7 +233,10 @@ This distinction is carried into member tables, family summaries, the atlas, and
 ## Web portal
 
 The included portal provides an internal-network upload workflow with persistent history, live
-logs, original-input downloads, run parameters, and generated atlas/Excel downloads.
+logs, original-input downloads, run parameters, and generated atlas/Excel downloads. Portal runs
+default to `output.html_mode: backend`: the HTML contains the interactive data model while large
+PDB, workbook, and ZIP artifacts are streamed only when selected. Use `html_mode: single` for an
+offline, self-contained export.
 
 ```bash
 cd portal
@@ -253,7 +264,7 @@ unless all required evidence is complete.
 | [docs/FOLDSEEK_PARAMETERS.md](docs/FOLDSEEK_PARAMETERS.md) | Global fold, local domain, coverage, score, and scaling guidance |
 | [examples/EXPECTED.md](examples/EXPECTED.md) | Reproducible 100-protein acceptance baseline |
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
-| [docs/CLAUDE_FOR_SCIENCE_V3.0.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V3.0.0_HANDOFF.md) | v3 scientific model, implementation, validation, deployment evidence, and Claude acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V4.0.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.0.0_HANDOFF.md) | v4 scientific model, implementation, validation, deployment evidence, and Claude acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses

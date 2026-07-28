@@ -42,7 +42,17 @@ for _, r in fam.iterrows():
     domain_group = domains[domains.acc.astype(str).isin(accessions)] if len(domains) else pd.DataFrame()
     rows.append(dict(
         family=f, n_members=int(r.n_members),
-        mean_TM=r.get("mean_TM"), mean_identity=r.get("mean_identity"), max_identity=r.get("max_identity"),
+        mean_retained_edge_TM=r.get("mean_retained_edge_TM", r.get("mean_TM")),
+        mean_retained_edge_foldseek_fident=r.get(
+            "mean_retained_edge_foldseek_fident", r.get("mean_identity")
+        ),
+        max_retained_edge_foldseek_fident=r.get(
+            "max_retained_edge_foldseek_fident", r.get("max_identity")
+        ),
+        # Legacy aliases retained for older atlas builders.
+        mean_TM=r.get("mean_TM"),
+        mean_identity=r.get("mean_identity"),
+        max_identity=r.get("max_identity"),
         mean_pLDDT=r.get("mean_pLDDT"), mean_len=r.get("mean_len"),
         suss_pct=suss_pct(f), cons_sasa_r=cons_r(f),
         n_effector=int(g.is_effector.sum()) if len(g) else 0,

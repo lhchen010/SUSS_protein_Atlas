@@ -98,10 +98,17 @@ for fam, ref in targets:
                 all_pockets.append({
                     "pocket_id": int(pred.get("rank", idx + 1)),
                     "score": float(pred.get("score", 0)),
+                    "probability": (
+                        float(pred.get("probability"))
+                        if pd.notna(pred.get("probability"))
+                        else None
+                    ),
                     "lining_residues": resis,
                 })
             top = max(all_pockets, key=lambda p: p["score"])
-            entry["p2rank"] = {"top_score": top["score"], "n_pockets": len(all_pockets),
+            entry["p2rank"] = {"top_score": top["score"],
+                               "top_probability": top["probability"],
+                               "n_pockets": len(all_pockets),
                                "lining_residues": top["lining_residues"], "pockets": all_pockets}
     # fpocket (local only)
     if FPOCKET:

@@ -33,6 +33,8 @@ domain_clustering:
   evalue: 0.001
   sensitivity: 9.5
   min_probability: 0.5
+  min_lddt: 0.5
+  min_alntm: 0.0
   min_aligned_residues: 40
   min_shorter_coverage: 0.0
   interval_overlap: 0.5

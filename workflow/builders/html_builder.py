@@ -383,11 +383,18 @@ def _enrich_pocket_entry(results_dir, fam, entry):
                 predictions.append({
                     "pocket_id": int(pred.get("rank", idx + 1)),
                     "score": float(pred.get("score", 0)),
+                    "probability": (
+                        float(pred.get("probability"))
+                        if pd.notna(pred.get("probability"))
+                        else None
+                    ),
                     "lining_residues": residues,
                 })
             if predictions:
                 top = max(predictions, key=lambda p: p["score"])
-                p2.update(top_score=top["score"], n_pockets=len(predictions),
+                p2.update(top_score=top["score"],
+                          top_probability=top["probability"],
+                          n_pockets=len(predictions),
                           lining_residues=top["lining_residues"], pockets=predictions)
                 entry["p2rank"] = p2
 
@@ -814,12 +821,56 @@ def _hub_from_tm(tm, labels):
         return (labels[0] if labels else None), None
 
 
+def _matrix_pair_stats(table):
+    """Return explicit off-diagonal stats for a labeled symmetric matrix."""
+    empty = {
+        "mean_all": None,
+        "mean_detected": None,
+        "maximum": None,
+        "n_pairs": 0,
+        "n_detected": 0,
+    }
+    if table is None or len(table) < 2:
+        return empty
+    try:
+        matrix = table.set_index(table.columns[0]).apply(
+            pd.to_numeric, errors="coerce"
+        ).to_numpy(dtype=float)
+        values = matrix[np.triu_indices(len(matrix), k=1)]
+        values = values[np.isfinite(values)]
+        if not len(values):
+            return empty
+        detected = values[values > 0]
+        return {
+            "mean_all": round(float(values.mean()), 3),
+            "mean_detected": (
+                round(float(detected.mean()), 3) if len(detected) else None
+            ),
+            "maximum": round(float(values.max()), 3),
+            "n_pairs": int(len(values)),
+            "n_detected": int(len(detected)),
+        }
+    except Exception:
+        return empty
+
+
 def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 results_dir, out_html, mode="single", atlas_name="atlas", config=None):
     config = config or {}
     famdir = os.path.join(results_dir, "families")
     master = pd.read_csv(master_csv)
     anno = pd.read_csv(annotation_csv) if os.path.exists(annotation_csv) else pd.DataFrame()
+    downloads_dir = os.path.join(results_dir, "downloads")
+    if mode == "backend":
+        os.makedirs(downloads_dir, exist_ok=True)
+
+    def store_download(name, encoded):
+        if mode != "backend":
+            return encoded
+        path = os.path.join(downloads_dir, name)
+        with open(path, "wb") as handle:
+            handle.write(base64.b64decode(encoded))
+        return None
 
     def load_csv(p):
         return pd.read_csv(p) if os.path.exists(p) else None
@@ -833,6 +884,17 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     domain_families_all = load_csv(os.path.join(results_dir, "domain_families.csv"))
     domain_edges_all = load_csv(os.path.join(results_dir, "domain_edges.csv"))
     domain_bridges_all = load_csv(os.path.join(results_dir, "domain_cross_edges.csv"))
+    domain_workbench = {"schema_version": 1, "families": {}}
+    domain_workbench_path = os.path.join(results_dir, "domain_workbench.json")
+    if os.path.exists(domain_workbench_path):
+        try:
+            domain_workbench = json.load(open(domain_workbench_path))
+        except Exception:
+            domain_workbench = {"schema_version": 1, "families": {}}
+    for workbench in domain_workbench.get("families", {}).values():
+        tree = workbench.get("sequence_newick", "")
+        if tree:
+            workbench["sequence_tree_svg"] = _svg_datauri(_newick_to_svg(tree))
 
     def structure_text(accession, family_dir=None):
         candidates = []
@@ -888,14 +950,36 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 m = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", line)
                 if m: members.append(m.group(0))
         fam_accs[fam] = members
-        NET_nodes.append(dict(id=fam, n=int(r.n_members),
-                              tm=float(r.get("mean_TM", 0) or 0), id_pct=float(r.get("mean_identity", 0) or 0),
-                              suss=float(r.get("suss_pct", 0) or 0), plddt=float(r.get("mean_pLDDT", 0) or 0),
-                              len=float(r.get("mean_len", 0) or 0), maxid=float(r.get("max_identity", 0) or 0)))
         # assets
         tm = load_csv(os.path.join(fd, f"{fam}_TM.csv"))
         idm = load_csv(os.path.join(fd, f"{fam}_ID.csv"))
         exp = load_csv(os.path.join(fd, f"{fam}_expression.csv"))
+        tm_stats = _matrix_pair_stats(tm)
+        id_stats = _matrix_pair_stats(idm)
+        retained_tm = _finite_float(
+            r.get("mean_retained_edge_TM", r.get("mean_TM"))
+        ) or 0.0
+        retained_fident = _finite_float(
+            r.get(
+                "mean_retained_edge_foldseek_fident",
+                r.get("mean_identity"),
+            )
+        ) or 0.0
+        NET_nodes.append(dict(
+            id=fam,
+            n=int(r.n_members),
+            tm=tm_stats["mean_all"] or 0.0,
+            retained_tm=retained_tm,
+            id_pct=id_stats["mean_all"] or 0.0,
+            id_detected=id_stats["mean_detected"],
+            maxid=id_stats["maximum"] or 0.0,
+            retained_foldseek_fident=retained_fident,
+            n_pairs=tm_stats["n_pairs"],
+            n_blast_pairs=id_stats["n_detected"],
+            suss=float(r.get("suss_pct", 0) or 0),
+            plddt=float(r.get("mean_pLDDT", 0) or 0),
+            len=float(r.get("mean_len", 0) or 0),
+        ))
         assets = {}
         if tm is not None:
             labs = list(tm.columns[1:]) if tm.columns[0].lower() in ("", "unnamed: 0") else list(tm.iloc[:, 0].astype(str))
@@ -985,6 +1069,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             ref_used=members[0] if members else "",
             hub=hub,
             hub_meanTM=hub_meanTM,
+            foldseek_tm_all_pairs=tm_stats,
+            blast_identity_all_pairs=id_stats,
+            mean_retained_edge_TM=retained_tm,
+            mean_retained_edge_foldseek_fident=retained_fident,
             foldtree_status=tree_status,
             foldtree_rooting_label=rooting_label,
             sequence_analysis_status=sequence_status,
@@ -1062,7 +1150,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         p2 = pk.get("p2rank", {}); fp = pk.get("fpocket", {})
         if p2:
             ex.update(p2rank_resi=p2.get("lining_residues", []), p2rank_score=p2.get("top_score"),
-                      p2rank_n=p2.get("n_pockets"), p2rank_prob=p2.get("top_score"))
+                      p2rank_n=p2.get("n_pockets"),
+                      p2rank_prob=p2.get("top_probability"))
         if fp:
             ex.update(fpocket_resi=fp.get("lining_residues", []), fpocket_score=fp.get("top_score"))
         # default pocket shown = P2Rank if present else fpocket
@@ -1123,14 +1212,18 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             REFPDB[f"{fam}_struct"] = open(
                 structural_pdb, encoding="utf-8", errors="replace"
             ).read()
-        # structures (single mode embeds; backend mode omits)
-        struct = {}
-        if mode == "single":
-            for a in members:
-                for cand in (os.path.join(fd, f"{a}.pdb"),
-                             os.path.join(results_dir, "..", "input", "pdb", f"{config.get('strain',{}).get('code','')}_{a}.pdb")):
-                    if os.path.exists(cand):
-                        struct[a] = open(cand, encoding="utf-8", errors="replace").read(); break
+        # Backend mode keeps source structures for transforms/download generation but
+        # does not duplicate them into the HTML payload.
+        source_struct = {}
+        for a in members:
+            for cand in (os.path.join(fd, f"{a}.pdb"),
+                         os.path.join(results_dir, "..", "input", "pdb", f"{config.get('strain',{}).get('code','')}_{a}.pdb")):
+                if os.path.exists(cand):
+                    source_struct[a] = open(
+                        cand, encoding="utf-8", errors="replace"
+                    ).read()
+                    break
+        struct = source_struct if mode == "single" else {}
         msa = _records_by_member(
             _read_fasta_records(os.path.join(fd, f"{fam}.aln")), members
         )
@@ -1156,9 +1249,9 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         # are embedded once and applied by the viewer and superposed-PDB downloader.
         transforms = {}
         fit_stats = {}
-        if struct:
-            ref_member = hub if hub in struct else next(iter(struct))
-            ref_pdb = struct[ref_member]
+        if source_struct:
+            ref_member = hub if hub in source_struct else next(iter(source_struct))
+            ref_pdb = source_struct[ref_member]
             identity_rotation = np.eye(3).tolist()
             identity_translation = [0.0, 0.0, 0.0]
             transforms[ref_member] = {"rotation": identity_rotation, "translation": identity_translation}
@@ -1167,7 +1260,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                                      "n_ca": ref_n_ca, "n_ca_total": ref_n_ca,
                                      "rmsd": 0.0, "rmsd_all": 0.0,
                                      "rotation": identity_rotation, "translation": identity_translation}
-            for member, pdbtext in struct.items():
+            for member, pdbtext in source_struct.items():
                 if member == ref_member:
                     continue
                 _, stats = _superpose_pdb(
@@ -1177,7 +1270,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
 
         # Downloads are generated server-side so the self-contained HTML needs no ZIP or
         # spreadsheet runtime. Original structures remain one PDB per ZIP member.
-        assets["structures_zip_b64"] = _structures_zip_b64(fam, struct)
+        assets["structures_zip_b64"] = store_download(
+            f"{fam}_member_structures.zip",
+            _structures_zip_b64(fam, source_struct),
+        )
         blast_pairs = None
         if classification_all is not None and {"q", "t"}.issubset(classification_all.columns):
             member_set = set(members)
@@ -1185,7 +1281,9 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 classification_all.q.astype(str).isin(member_set) &
                 classification_all.t.astype(str).isin(member_set)
             ].copy()
-        assets["xlsx_b64"] = _xlsx_b64(
+        assets["xlsx_b64"] = store_download(
+            f"{fam}_data.xlsx",
+            _xlsx_b64(
             fam=fam, members=members,
             annotation=(anno[anno["family"].astype(str) == str(fam)].copy()
                         if len(anno) and "family" in anno.columns else None),
@@ -1195,14 +1293,15 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             sequence_msa=sequence_msa, structural_msa=msa,
             three_di_msa=three_di_msa, sequence_status=sequence_status,
             domains=family_domains, subgroups=family_subgroups,
-            structural_cons=structural_cons)
+            structural_cons=structural_cons),
+        )
         # ESM-tolerance-colored ref PDB: the renderer's "ESM" structure mode reads
         # REFPDB["<fam>_esm"]; without it, clicking the ESM button feeds addModel(undefined)
         # and blanks the viewer. Build it from the ESM ref's embedded structure + per-site
         # mean substitution score (tolerance) written into the B-factor column.
         if ex.get("has_esm") and fam in esm_by_fam:
             eref = esm_by_fam[fam]["ref"]
-            eref_pdb = struct.get(eref) or (open(os.path.join(fd, f"{eref}.pdb"), encoding="utf-8", errors="replace").read()
+            eref_pdb = source_struct.get(eref) or (open(os.path.join(fd, f"{eref}.pdb"), encoding="utf-8", errors="replace").read()
                                             if os.path.exists(os.path.join(fd, f"{eref}.pdb")) else None)
             if eref_pdb:
                 tol = esm_by_fam[fam]["tol"]
@@ -1220,8 +1319,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         seq = {}
         for a in members:
             s = seqs_all.get(a)
-            if not s and a in struct:
-                s = _seq_from_pdb(struct[a])
+            if not s and a in source_struct:
+                s = _seq_from_pdb(source_struct[a])
             if s:
                 seq[a] = s
         PAY[fam] = dict(members=members, order=members, struct=struct, transforms=transforms,
@@ -1300,7 +1399,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "p2rank_resi": p2rank.get("lining_residues", []),
                 "p2rank_score": p2rank.get("top_score"),
                 "p2rank_n": p2rank.get("n_pockets"),
-                "p2rank_prob": p2rank.get("top_score"),
+                "p2rank_prob": p2rank.get("top_probability"),
                 "fpocket_resi": fpocket.get("lining_residues", []),
                 "fpocket_score": fpocket.get("top_score"),
                 "pocket_resi": (
@@ -1311,6 +1410,16 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "pocket_src": "p2rank" if p2rank else "fpocket" if fpocket else None,
                 "pocket_score": (
                     p2rank.get("top_score")
+                    if p2rank
+                    else fpocket.get("top_score")
+                    if fpocket
+                    else None
+                ),
+                "pocket_metric": (
+                    "probability" if p2rank else "score" if fpocket else None
+                ),
+                "pocket_value": (
+                    p2rank.get("top_probability")
                     if p2rank
                     else fpocket.get("top_score")
                     if fpocket
@@ -1376,7 +1485,9 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 peak_condition = max(expression_values, key=expression_values.get)
                 peak_expression = expression_values[peak_condition]
 
-            assets["xlsx_b64"] = _xlsx_b64(
+            assets["xlsx_b64"] = store_download(
+                f"{accession}_data.xlsx",
+                _xlsx_b64(
                 fam=accession,
                 members=[accession],
                 annotation=annotation_row if len(annotation_row) else None,
@@ -1391,7 +1502,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 trees={},
                 tree_status={},
                 fit_stats={},
-                analysis_kind="singleton",
+                analysis_kind="singleton"),
             )
             PAY[accession] = {
                 "kind": "singleton",
@@ -1435,6 +1546,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 ),
                 "pocket_method": extra.get("pocket_src"),
                 "pocket_score": _finite_float(extra.get("pocket_score")),
+                "pocket_metric": extra.get("pocket_metric"),
+                "pocket_value": _finite_float(extra.get("pocket_value")),
                 "has_esm": bool(extra.get("has_esm")),
                 "rna_condition": peak_condition,
                 "rna_peak": peak_expression,
@@ -1553,17 +1666,28 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         for _, family in domain_families_all.iterrows():
             family_id = str(family.domain_family)
             labels = Counter(annotations_by_domain.get(family_id, []))
+            top_annotation, top_annotation_count = (
+                labels.most_common(1)[0] if labels else ("", 0)
+            )
             domain_family_records.append({
                 "domain_family": family_id,
                 "n_segments": int(family.n_segments),
                 "n_proteins": int(family.n_proteins),
                 "n_edges": int(family.n_edges),
                 "mean_probability": _finite_float(family.mean_probability),
+                "mean_alntm": _finite_float(family.get("mean_alntm")),
                 "mean_lddt": _finite_float(family.mean_lddt),
+                "mean_query_coverage": _finite_float(
+                    family.get("mean_query_coverage")
+                ),
+                "mean_target_coverage": _finite_float(
+                    family.get("mean_target_coverage")
+                ),
                 "mean_aligned_residues": _finite_float(
                     family.mean_aligned_residues
                 ),
-                "top_annotation": labels.most_common(1)[0][0] if labels else "",
+                "top_annotation": top_annotation,
+                "top_annotation_count": int(top_annotation_count),
                 "n_annotated_segments": sum(
                     bool(member["overlap_annotations"])
                     for member in enriched_domain_members
@@ -1582,7 +1706,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "prob": _finite_float(edge.prob),
                 "bits": _finite_float(edge.bits),
                 "lddt": _finite_float(edge.lddt),
+                "alntmscore": _finite_float(getattr(edge, "alntmscore", None)),
                 "fident": _finite_float(edge.fident),
+                "qcov": _finite_float(getattr(edge, "qcov", None)),
+                "tcov": _finite_float(getattr(edge, "tcov", None)),
                 "alnlen": int(edge.alnlen),
                 "shorter_coverage": _finite_float(edge.shorter_coverage),
             })
@@ -1607,11 +1734,13 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         DOMAIN_FAMILIES=domain_family_records,
         DOMAIN_MEMBERS=enriched_domain_members,
         DOMAIN_EDGES=domain_edge_records,
+        DOMAIN_WORKBENCH=domain_workbench,
         DNET=dict(nodes=domain_family_records, edges=domain_network_edges),
         EXTRA=EXTRA,
         REFPDB=REFPDB,
         PAY=PAY,
         SUMMARY=SUMMARY,
+        BACKEND={"enabled": mode == "backend"},
     )
 
     # assemble via string splice (never re.sub)

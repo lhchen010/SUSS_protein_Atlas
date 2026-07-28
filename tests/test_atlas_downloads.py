@@ -15,6 +15,27 @@ sys.path.insert(0, str(ROOT / "workflow" / "builders"))
 import html_builder
 
 
+def test_matrix_pair_stats_separate_all_pairs_from_detected_pairs():
+    matrix = pd.DataFrame(
+        {
+            "member": ["A", "B", "C"],
+            "A": [1.0, 0.6, 0.0],
+            "B": [0.6, 1.0, 0.3],
+            "C": [0.0, 0.3, 1.0],
+        }
+    )
+
+    stats = html_builder._matrix_pair_stats(matrix)
+
+    assert stats == {
+        "mean_all": 0.3,
+        "mean_detected": 0.45,
+        "maximum": 0.6,
+        "n_pairs": 3,
+        "n_detected": 2,
+    }
+
+
 def _pdb(coords):
     lines = []
     for serial, (x, y, z) in enumerate(coords, 1):
@@ -244,6 +265,31 @@ def test_singleton_annotation_payload_preserves_foldseek_scores_and_statuses():
     assert member["foldseek_afdb_status"] == "complete"
 
 
+def test_domain_search_gene_aliases_include_accessions_and_segments():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'field==="gene"||field==="acc"||field==="accession"||field==="protein"'
+        in renderer
+    )
+    assert "[m.acc,m.segment_id,m.gene]" in renderer
+
+
+def test_singleton_p2rank_display_uses_probability_not_ranking_score():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text(encoding="utf-8")
+    builder = (
+        ROOT / "workflow" / "builders" / "html_builder.py"
+    ).read_text(encoding="utf-8")
+
+    assert 's.pocket_metric==="probability"?"prob ":"score "' in renderer
+    assert '"pocket_metric": (' in builder
+    assert '"pocket_value": (' in builder
+
+
 def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     results = tmp_path / "results"
     structures = tmp_path / "pdb"
@@ -273,8 +319,8 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
         _pdb([[0, 0, 0], [1, 0, 0], [0, 1, 0]])
     )
     (results / "pockets.json").write_text(
-        '{"PROT1":{"ref":"PROT1","fpocket":{"top_score":2.4,'
-        '"n_pockets":1,"lining_residues":[2]}}}'
+        '{"PROT1":{"ref":"PROT1","p2rank":{"top_score":2.4,'
+        '"top_probability":0.72,"n_pockets":1,"lining_residues":[2]}}}'
     )
     pd.DataFrame([{
         "domain_family": "D0", "n_segments": 1, "n_proteins": 1,
@@ -327,6 +373,8 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     assert '"segment_id": "PROT1:1-3"' in html
     assert '"label": "PF12345"' in html
     assert '"pocket_residues": [2]' in html
+    assert '"pocket_metric": "probability"' in html
+    assert '"pocket_value": 0.72' in html
     assert html.count("ATOM      1") == 1
 
 
@@ -366,6 +414,24 @@ def test_renderer_uses_aligned_payload_and_zip_download():
     assert "structures_zip_b64" in renderer
     assert "All structures (ZIP)" in renderer
     assert "All structures (multi-PDB)" not in renderer
+
+
+def test_backend_atlas_uses_lazy_artifacts_and_streaming_routes():
+    renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+    builder = (ROOT / "workflow" / "builders" / "html_builder.py").read_text()
+    portal = (ROOT / "portal" / "suss_portal.py").read_text()
+
+    assert "function fetchStructure" in renderer
+    assert 'artifactUrl("structure",acc)' in renderer
+    assert 'artifactUrl("xlsx",fam)' in renderer
+    assert 'artifactUrl("structures",fam)' in renderer
+    assert "hasStruct=BACKEND.enabled||" in renderer
+    assert "if(!pdb&&BACKEND.enabled&&!structureFetchFailed[m.acc])" in renderer
+    assert 'if mode == "backend"' in builder
+    assert "store_download" in builder
+    assert 'elif u.path == "/artifact"' in portal
+    assert "def _stream_file" in portal
+    assert 'html_mode="backend"' in portal
 
 
 def test_network_search_supports_annotation_fields_and_highlighting():
@@ -445,6 +511,15 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "DOMAIN_FAMILIES" in renderer
     assert "action=/search-structure" in portal
     assert "structure_search_index.csv" in portal
+    assert "protein={urllib.parse.quote(hit['acc'])}" in portal
+    assert "&open={urllib.parse.quote(family)}" in portal
+    assert 'segment={urllib.parse.quote(hit["acc"])}' in portal
+    assert "function openAtlasTargetFromUrl" in renderer
+    assert 'params.get("protein")' in renderer
+    assert 'params.get("open")' in renderer
+    assert 'params.get("segment")' in renderer
+    assert "except subprocess.TimeoutExpired" in portal
+    assert "shutil.rmtree(search_dir, ignore_errors=True)" in portal
     assert "Domain-aware Foldseek" in portal
 
 

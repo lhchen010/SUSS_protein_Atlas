@@ -37,6 +37,8 @@ domain_clustering:
   evalue: 0.001
   sensitivity: 9.5
   min_probability: 0.5
+  min_lddt: 0.5                   # rejects high-probability but structurally weak bridges
+  min_alntm: 0.0                  # optional local alignment TM threshold
   min_aligned_residues: 40        # prevents short motifs from becoming domain families
   min_shorter_coverage: 0.0       # allows a shared domain in two multi-domain proteins
   interval_overlap: 0.5

@@ -45,7 +45,11 @@ def pock_resis(fam, method):
     e = pockets.get(fam, {})
     p = e.get(method, {})
     r = p.get("lining_residues", []) if isinstance(p, dict) else []
-    return r, (p.get("top_score") if isinstance(p, dict) else None)
+    return (
+        r,
+        p.get("top_score") if isinstance(p, dict) else None,
+        p.get("top_probability") if isinstance(p, dict) else None,
+    )
 
 def _usalign_stats(fam):
     """mean US-align TM and Foldseek<->US-align consistency r for a family, or (None,None,0)."""
@@ -75,6 +79,30 @@ def _usalign_stats(fam):
     except Exception:
         return None, None, 0
 
+def _matrix_stats(fam, suffix):
+    """Explicit all-pair and detected-pair means for a family matrix."""
+    path = os.path.join(
+        os.path.dirname(members_csv), "families", fam, f"{fam}_{suffix}.csv"
+    )
+    if not os.path.exists(path):
+        return None, None, None, 0, 0
+    try:
+        matrix = pd.read_csv(path, index_col=0).apply(
+            pd.to_numeric, errors="coerce"
+        ).values.astype(float)
+        values = matrix[np.triu_indices(len(matrix), k=1)]
+        values = values[np.isfinite(values)]
+        detected = values[values > 0]
+        return (
+            round(float(values.mean()), 3) if len(values) else None,
+            round(float(detected.mean()), 3) if len(detected) else None,
+            round(float(values.max()), 3) if len(values) else None,
+            int(len(values)),
+            int(len(detected)),
+        )
+    except Exception:
+        return None, None, None, 0, 0
+
 rows = []
 # iterate every family label present in members (includes 'singleton' bucket -> split per acc)
 fam_groups = mem.groupby("family")
@@ -94,8 +122,8 @@ for fam, gmem in fam_groups:
                      top_pfam if top_pfam != "—" else
                      top_pdb if top_pdb != "—" else "novel/unknown")
         ref = pockets.get(label_fam, {}).get("ref", "")
-        fp_res, fp_score = pock_resis(label_fam, "fpocket")
-        p2_res, p2_score = pock_resis(label_fam, "p2rank")
+        fp_res, fp_score, _ = pock_resis(label_fam, "fpocket")
+        p2_res, p2_score, p2_probability = pock_resis(label_fam, "p2rank")
         n = len(acc_list)
         effector_complete = ("effectorp_status" not in g_anno or
                              (len(g_anno) and g_anno.effectorp_status.eq("complete").all()))
@@ -105,6 +133,16 @@ for fam, gmem in fam_groups:
         pct_novel = round(100 * known_novel.mean(), 1) if len(known_novel) else np.nan
         # US-align independent TM cross-check (real families only; singletons have no pairs)
         _us_mean, _us_r, _us_disagree = (_usalign_stats(label_fam) if not is_single else (None, None, 0))
+        _fs_all, _fs_detected, _fs_max, _fs_pairs, _fs_hits = (
+            _matrix_stats(label_fam, "TM")
+            if not is_single
+            else (None, None, None, 0, 0)
+        )
+        _bl_all, _bl_detected, _bl_max, _bl_pairs, _bl_hits = (
+            _matrix_stats(label_fam, "ID")
+            if not is_single
+            else (None, None, None, 0, 0)
+        )
         # RNAseq: mean expression per condition across this family's members (blank if no RNAseq)
         rna = {}
         if expr is not None and cond_cols:
@@ -122,12 +160,23 @@ for fam, gmem in fam_groups:
             top_pfam=top_pfam, top_pfam_pct=top_pfam_frac,
             top_pdb_fold=top_pdb, top_pdb_pct=top_pdb_frac,
             top_protein_name=top_name,
-            mean_TM=m.get("mean_TM", np.nan if n > 1 else 1.0),
+            foldseek_TM_all_pairs=_fs_all,
+            foldseek_TM_detected_pairs=_fs_detected,
+            n_structural_pairs=_fs_pairs,
+            mean_retained_edge_TM=m.get(
+                "mean_retained_edge_TM", m.get("mean_TM", np.nan)
+            ),
             mean_TM_usalign=_us_mean,
             tm_foldseek_usalign_r=_us_r,
             tm_pairs_disagree=_us_disagree,
-            mean_identity=m.get("mean_identity", np.nan),
-            max_identity=m.get("max_identity", np.nan),
+            blast_identity_all_pairs=_bl_all,
+            blast_identity_detected_pairs=_bl_detected,
+            max_blast_identity=_bl_max,
+            n_blast_detected_pairs=_bl_hits,
+            mean_retained_edge_foldseek_fident=m.get(
+                "mean_retained_edge_foldseek_fident",
+                m.get("mean_identity", np.nan),
+            ),
             suss_pct=m.get("suss_pct", np.nan),
             cons_sasa_r=m.get("cons_sasa_r", np.nan),
             pct_effector=m.get("pct_effector", pct_eff),
@@ -138,6 +187,7 @@ for fam, gmem in fam_groups:
             fpocket_score=fp_score,
             fpocket_residues=" ".join(map(str, fp_res)),
             p2rank_score=p2_score,
+            p2rank_probability=p2_probability,
             p2rank_residues=" ".join(map(str, p2_res)),
             **rna,
         ))
@@ -159,18 +209,23 @@ with pd.ExcelWriter(out_xlsx, engine="openpyxl") as xw:
         ("top_pfam / top_pfam_pct", "most common Pfam domain and % of members carrying it"),
         ("top_pdb_fold / top_pdb_pct", "most common Foldseek PDB100 hit and % of members"),
         ("top_protein_name", "most common AFDB-SwissProt protein name (real name, not accession)"),
-        ("mean_TM", "mean pairwise Foldseek TM-score within the cluster (structural similarity; 1.0 for singletons)"),
+        ("foldseek_TM_all_pairs", "mean Foldseek TM across every unique within-family protein pair; missing hits are zero"),
+        ("foldseek_TM_detected_pairs", "mean Foldseek TM among pairs with a reported Foldseek hit"),
+        ("mean_retained_edge_TM", "mean Foldseek TM among graph edges retained by the clustering thresholds"),
         ("mean_TM_usalign", "mean pairwise US-align TM within the cluster — algorithm-independent cross-check of Foldseek TM"),
         ("tm_foldseek_usalign_r", "Pearson r between Foldseek and US-align TM over the cluster's pairs (high = robust clustering)"),
         ("tm_pairs_disagree", "number of within-cluster pairs where |Foldseek TM − US-align TM| > 0.1"),
-        ("mean_identity / max_identity", "mean / max pairwise BLASTp sequence identity (%) within the cluster"),
+        ("blast_identity_all_pairs", "mean best-HSP BLASTp identity across all unique protein pairs; undetected pairs are zero"),
+        ("blast_identity_detected_pairs / max_blast_identity", "mean / max best-HSP BLASTp identity among detected pairs"),
+        ("mean_retained_edge_foldseek_fident", "mean Foldseek alignment identity among retained structural graph edges; this is not BLAST identity"),
         ("suss_pct", "% of within-family structural links that are core_SUSS (BLAST-undetectable)"),
         ("cons_sasa_r", "Pearson r(conservation, relative SASA) on the reference; negative expected"),
         ("pct_effector / pct_novel", "% of members called effector (EffectorP) / novel (no fold AND no domain)"),
         ("mean_pLDDT / mean_len", "mean AF2 pLDDT / mean sequence length"),
         ("pocket_ref", "reference structure (family hub) pockets were detected on"),
         ("fpocket_score / fpocket_residues", "fpocket top-pocket score and space-separated lining residue numbers"),
-        ("p2rank_score / p2rank_residues", "P2Rank top-pocket score (probability) and lining residue numbers"),
+        ("p2rank_score / p2rank_probability / p2rank_residues",
+         "P2Rank top-pocket ranking score, calibrated probability, and lining residue numbers"),
     ]
     if cond_cols:
         doc.append(("rnaseq_<condition>", "mean expression across the cluster's members for each RNAseq "

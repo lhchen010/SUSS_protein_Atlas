@@ -1,4 +1,4 @@
-# Foldseek parameters in SUSS Protein Atlas v3
+# Foldseek parameters in SUSS Protein Atlas v4
 
 SUSS Atlas uses Foldseek for two different scientific questions. Their scores and thresholds
 must not be interpreted as interchangeable.
@@ -40,6 +40,8 @@ segments rather than whole proteins.
 | `domain_clustering.sensitivity` | `9.5` | Sensitive Foldseek search |
 | `domain_clustering.min_probability` | `0.5` | Minimum Foldseek hit probability |
 | `domain_clustering.min_aligned_residues` | `40` | Reject short motifs and noisy fragments |
+| `domain_clustering.min_lddt` | `0.5` | Minimum local structural agreement for a retained segment link |
+| `domain_clustering.min_alntm` | `0.0` | Optional alignment-TM filter; zero disables this second cutoff |
 | `domain_clustering.min_shorter_coverage` | `0.0` | Allow a domain embedded in two long proteins |
 | `domain_clustering.interval_overlap` | `0.5` | Merge substantially overlapping hits into one segment |
 
@@ -51,7 +53,9 @@ multiple `D` families.
 
 - TM score describes global geometric similarity after normalization by protein length.
 - Foldseek 3Di+AA search uses structural-alphabet and amino-acid evidence; e-value, probability,
-  bit score, lDDT, and alignment length describe a local hit.
+  bit score, lDDT, alignment TM, and alignment length describe a local hit.
+- Local lDDT is the default geometry filter for D-family links. Alignment TM is available as an
+  optional second filter but is not interchangeable with the full-length symmetric TM threshold.
 - Coverage is not a similarity score. It states how much of each protein participates in the
   alignment.
 - A coverage value of `0.00` means no minimum coverage filter is requested. It does not mean the
@@ -86,5 +90,5 @@ coverage.
 For one strain or approximately 1,500 proteins, exhaustive all-vs-all search is reasonable.
 For tens of thousands of proteins, use a separate discovery workflow based on Foldseek
 prefiltering or clustering, then run the detailed atlas analyses only for selected groups.
-The v3 `F`, `D`, and `S` identifiers and structure-search index are designed to support that
+The v4 `F`, `D`, and `S` identifiers and structure-search index are designed to support that
 future multi-species workflow without redefining the current scientific layers.
