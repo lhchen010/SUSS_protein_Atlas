@@ -63,6 +63,7 @@ signals:
     small_family_max: 3
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
+  esm_scope: representatives
   pockets: [fpocket, p2rank]
   min_rate4site_sequences: 4
 
@@ -77,12 +78,14 @@ steps:
   pocket: true
   esm: true
   foldtree: true
+  domain_foldtree: false
   annotate: true
   rnaseq: auto
   cards: true
   atlas: true
 
 output:
+  analysis_scope: both
   html_mode: backend
   atlas_name: "cor_suss_atlas"
   allow_fallback_html: false

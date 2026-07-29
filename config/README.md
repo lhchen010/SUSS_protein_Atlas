@@ -18,10 +18,21 @@ Then edit `config/config.yaml`:
    A blank optional tool means `not_run`; a configured tool that is missing or fails stops the rule.
    `cards` is required whenever `atlas` is enabled.
 
+`output.analysis_scope` accepts `full`, `domain`, or `both`. The portal exposes the same choices
+and defaults to `both`. A domain-only run retains the lightweight full-family mapping needed to
+explain each segment's parent, but hides the F-family overview from the delivered atlas.
+
 `signals.foldtree_rooting` controls structural-tree rooting. Families with at most
 `small_family_max` members use midpoint rooting directly. Larger families use MAD first and
 fall back to midpoint rooting only when MAD output is missing or invalid. Every family records
 the actual method and recovery status in `<family>_foldtree_status.json`.
+`steps.domain_foldtree` separately controls FoldTree for every D family. It is disabled by
+default because large domain atlases can contain hundreds of families. FoldMason structural
+guide trees remain available when this option is off.
+
+`signals.esm_scope` defaults to `representatives`: F-family reference proteins plus protein
+singletons, matching the Full workbench evidence model. `all_proteins` is available for an
+explicit exhaustive scan, but `masked-marginals` can require orders of magnitude more GPU time.
 
 `pocket.p2rank_profile` selects the P2Rank feature profile. Use `alphafold` for the
 predicted structures expected by this workflow. AlphaFold PDB files store pLDDT in the
@@ -32,7 +43,7 @@ The effective profile is saved in `results/used_config.yaml`.
 `config.yaml.4070.example` is the exact configuration used to produce the published
 *C. orbiculare* atlas, for reference (paths are specific to that machine).
 
-Version 4 has three separate relationship layers:
+Version 5 has three separate relationship layers:
 
 - `clustering:` defines full-length `F` families using global Foldseek TM score and reciprocal
   structural coverage.
@@ -54,3 +65,8 @@ paper.
 - `backend` keeps the interactive atlas in HTML and stores large PDB, ZIP, and Excel artifacts
   under `results/downloads/` for the portal to stream on demand. This is recommended for large
   server runs.
+
+In backend mode every D family receives an Excel workbook, cropped-domain structure ZIP,
+complete-parent structure ZIP, and complete package ZIP. P2Rank/fpocket and ESM run once per
+protein; domain panels map those parent-protein results to segment coordinates rather than
+rerunning surface analysis on an artificial cropped boundary.

@@ -25,24 +25,31 @@ foldseek_tm=0.5 · tm_symmetric=min · leiden_resolution=1.0 · min_family_size=
 blast_evalue=1e-3 (core_SUSS criterion, adjustable) · qc: pLDDT≥50, length 50–1000
 
 ## DAG (see engine_rulegraph.svg)
-First half (all): qc → foldseek → **cluster (checkpoint)** → classify
-Second half (all including singletons): sasa_pocket · esm · annotate
-Second half (per-family, n≥2): msa → conservation → signature; msa → foldtree (×3 metric)
-Assembly: master → cards → assemble (atlas HTML) + composition (Excel)
+Full-length branch: qc → foldseek → **cluster (checkpoint)** → classify → F-family workbenches.
+
+Domain branch: qc → local Foldseek segments → D-family graph → domain workbench. Each D-family
+workbench stores cropped structures, FoldMason AA/3Di MSA, a FoldMason guide tree, reciprocal-
+coverage-controlled sequence subgroups with MAFFT/FastTree, all-pairs US-align, complete-parent
+superposition transforms, structural conservation, and optional FoldTree output.
+
+Shared per-protein evidence: FreeSASA, P2Rank, fpocket, ESM-Scan, annotation, DeepTMHMM, and
+optional RNA-seq. Pocket and ESM records are calculated per protein and reused by F, D, and
+singleton views.
+
+Assembly: master → cards → assemble (server-backed atlas HTML) + composition/download workbooks.
 
 Family count is determined after cluster → checkpoint dynamically expands per-family rules.
 
 ## Tool allocation (measured, see pipeline_io_contract.md)
-- **4070 (heavy work)**: foldseek, foldmason, rate4site (must include `-a <ref>`), blastp, P2Rank (java17 env),
-  ESM-1b (boltzgen GPU env), FoldTree (base env), InterProScan, EffectorP
-- **Local (light work)**: freesasa, fpocket (not installed on 4070), signature, plotting, HTML assembly
+- **4070 (heavy work)**: Foldseek, FoldMason, US-align, MAFFT/FastTree, BLASTp, Rate4Site,
+  P2Rank, fpocket, ESM-Scan, FoldTree, InterProScan, EffectorP, and DeepTMHMM.
+- **Assembly**: Python plotting, workbooks, ZIP packages, and the server-backed HTML data bridge.
 
 ## Validation status
-- First half: live re-execution matches baseline 71 families / 425 proteins / 92 singletons / 1610 edges / core_SUSS 1109 (front_half_validation.md)
-- Second half: family F5 full toolchain end-to-end working, signature reproduces aa_match=1.0 cons_sasa_r=−0.443 (back_half_validation.md)
-- DAG: 291 jobs end-to-end parse pass (min_size=2 → 71 families expanded)
-- **Pending**: complete interactive builder for assemble_html (html_builder.py) — currently falls back to table index;
-  full v19 renderer (artifact c1b281c8) awaiting porting into builders/.
+Release-specific live-run metrics and acceptance checks are recorded in the corresponding
+`CLAUDE_FOR_SCIENCE_V*.md` handoff. The portal must not be promoted from staging until Python
+tests, JavaScript syntax, Snakemake target execution, artifact download checks, and browser
+acceptance all pass.
 
 ## Directory structure
 ```

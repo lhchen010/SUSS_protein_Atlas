@@ -165,16 +165,23 @@ def form_page(msg_html=""):
           <a href="/help#rnaseq">format help</a></div>
       </fieldset>
       <fieldset><legend>Analyses to run</legend>
+        <label>Atlas scope</label>
+        <div class=toggles>
+          <label><input type=radio name=analysis_scope value=both checked> Combined — full-length and domain-aware families (recommended)</label>
+          <label><input type=radio name=analysis_scope value=full> Full-length only — F families and protein singletons</label>
+          <label><input type=radio name=analysis_scope value=domain> Domain-aware only — D families and unclustered proteins</label>
+        </div>
+        <div class=hint style="margin:3px 0 8px">Combined runs one shared Foldseek search backbone and creates one HTML with linked F↔D workbenches. Domain-only still retains the lightweight parent-family mapping needed to explain where each domain came from.</div>
         <div class=toggles>
           <label><input type=checkbox checked disabled> QC</label>
           <label><input type=checkbox checked disabled> Cluster</label>
           <label><input type=checkbox name=classify checked> Classify (BLAST)</label>
-          <label><input type=checkbox name=domain_cluster checked> Domain-aware families</label>
-          <label><input type=checkbox name=sequence_msa checked> Sequence MSA / tree</label>
-          <label><input type=checkbox name=conservation checked> Evolutionary conservation</label>
+          <label><input type=checkbox name=sequence_msa checked> F-family sequence MSA / tree</label>
+          <label><input type=checkbox name=conservation checked> F-family Rate4Site conservation</label>
           <label><input type=checkbox name=pocket checked> Pocket (fpocket/P2Rank)</label>
           <label><input type=checkbox name=esm checked> ESM tolerance</label>
-          <label><input type=checkbox name=foldtree checked> FoldTree</label>
+          <label><input type=checkbox name=foldtree checked> FoldTree for F families</label>
+          <label><input type=checkbox name=domain_foldtree> FoldTree for D families <span class=hint>(advanced; slower)</span></label>
           <label><input type=checkbox name=annotate checked> Annotate (InterPro/Foldseek/EffectorP)</label>
           <label><input type=checkbox checked disabled> Cards (required by atlas)</label>
           <label><input type=checkbox name=rnaseq_step checked> RNAseq (if xlsx given)</label>
@@ -241,6 +248,7 @@ def _params_block(j):
         ("Species", m.get("species", "")),
         ("Host / range", m.get("host_range", "")),
         ("Colletotrichum", "yes" if m.get("is_colleto") else "no (outgroup)"),
+        ("Atlas scope", m.get("analysis_scope", "both")),
         ("Foldseek TM threshold", m.get("tm")),
         ("Reciprocal structural coverage", m.get("coverage")),
         ("P2Rank structure profile", m.get("p2rank_profile", "alphafold")),
@@ -715,7 +723,8 @@ def _write_config(eng, meta):
               **{k: bool(v) for k, v in steps_in.items()})
     cfg.setdefault("output", {}).update(
         html_mode="backend", atlas_name=f"{meta['code']}_suss_atlas",
-        project_title=meta["project_title"])
+        project_title=meta["project_title"],
+        analysis_scope=meta.get("analysis_scope", "both"))
     yaml.safe_dump(cfg, open(cfgp, "w"), sort_keys=False, allow_unicode=True)
 
 def _log(j, line):
@@ -939,6 +948,24 @@ class H(BaseHTTPRequestHandler):
                 )
                 ctype = "application/zip"
                 filename = f"{name}_member_structures.zip"
+            elif kind == "domain_parents":
+                path = os.path.join(
+                    engine, "results", "downloads", f"{name}_parent_structures.zip"
+                )
+                ctype = "application/zip"
+                filename = f"{name}_parent_structures.zip"
+            elif kind == "domain_package":
+                path = os.path.join(
+                    engine, "results", "downloads", f"{name}_domain_package.zip"
+                )
+                ctype = "application/zip"
+                filename = f"{name}_domain_package.zip"
+            elif kind == "reference":
+                path = os.path.join(
+                    engine, "results", "downloads", f"{name}.pdb"
+                )
+                ctype = "chemical/x-pdb"
+                filename = f"{name}.pdb"
             else:
                 path = ""
                 ctype = "application/octet-stream"
@@ -1041,6 +1068,9 @@ class H(BaseHTTPRequestHandler):
         files = {"pdb_tar": pdb_bytes, "seqs": rd("seqs"), "rnaseq": rd("rnaseq")}
         rnaseq_given = files["rnaseq"] is not None
         def ck(n): return form.getfirst(n) is not None
+        analysis_scope = _field(form, "analysis_scope", "both")
+        if analysis_scope not in ("full", "domain", "both"):
+            analysis_scope = "both"
         meta = dict(
             code=re.sub(r"[^A-Za-z0-9_]", "", _field(form, "code", "strain") or "strain"),
             species=_field(form, "species", ""),
@@ -1064,11 +1094,16 @@ class H(BaseHTTPRequestHandler):
                 else "alphafold"
             ),
             project_title=_field(form, "project_title", "").replace('"', "'"),
+            analysis_scope=analysis_scope,
             rnaseq_xlsx=("input/rnaseq.xlsx" if rnaseq_given else ""),
             rnaseq_mode=(("true" if ck("rnaseq_step") else "false") if rnaseq_given else "false"),
-            steps=dict(classify=ck("classify"), domain_cluster=ck("domain_cluster"),
-                       sequence_msa=ck("sequence_msa"), conservation=ck("conservation"),
-                       pocket=ck("pocket"), esm=ck("esm"), foldtree=ck("foldtree"),
+            steps=dict(classify=ck("classify"),
+                       domain_cluster=analysis_scope in ("domain", "both"),
+                       sequence_msa=ck("sequence_msa") and analysis_scope in ("full", "both"),
+                       conservation=ck("conservation") and analysis_scope in ("full", "both"),
+                       pocket=ck("pocket"), esm=ck("esm"),
+                       foldtree=ck("foldtree") and analysis_scope in ("full", "both"),
+                       domain_foldtree=ck("domain_foldtree"),
                        annotate=ck("annotate")),
         )
         job_id = time.strftime("%Y%m%d-%H%M%S") + f"-{meta['code']}-{uuid.uuid4().hex[:8]}"

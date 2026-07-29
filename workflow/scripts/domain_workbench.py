@@ -1,17 +1,20 @@
-"""Build representative structures, superpositions, MSA, and trees for D families."""
+"""Build full-featured workbench assets for local structural-domain families."""
 
 import json
 import math
 import re
+import shutil
 import subprocess
-import tempfile
+import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from foldtree_runner import run_foldtree_family
 from runtime_utils import resolve_executable
-from v3_utils import fasta_records
+from v3_utils import fasta_records, foldmason_column_scores, protein_id
 
 
 def segment_pdb(path: Path, start: int, end: int) -> str:
@@ -29,7 +32,47 @@ def segment_pdb(path: Path, start: int, end: int) -> str:
 
 
 def safe_name(segment_id: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", segment_id.replace(":", "_"))
+    return re.sub(r"[^A-Za-z0-9_.-]+", "__", segment_id)
+
+
+def json_safe(value):
+    """Convert numeric missing values to explicit JSON nulls."""
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def read_fasta_text(text: str, reverse_ids: dict[str, str]) -> dict[str, str]:
+    records = {}
+    current = None
+    chunks = []
+    for line in text.splitlines():
+        if line.startswith(">"):
+            if current is not None:
+                records[reverse_ids.get(current, current)] = "".join(chunks)
+            current = line[1:].split()[0]
+            chunks = []
+        elif current is not None:
+            chunks.append(line.strip())
+    if current is not None:
+        records[reverse_ids.get(current, current)] = "".join(chunks)
+    return records
+
+
+def write_fasta(path: Path, records: dict[str, str], id_map: dict[str, str]):
+    path.write_text(
+        "".join(
+            f">{id_map.get(record_id, record_id)}\n{sequence}\n"
+            for record_id, sequence in records.items()
+        ),
+        encoding="utf-8",
+    )
 
 
 def parse_usalign(stdout: str) -> tuple[dict, dict]:
@@ -60,13 +103,97 @@ def parse_usalign(stdout: str) -> tuple[dict, dict]:
     if len(rows) != 3:
         raise ValueError("US-align output did not contain a 3x4 transform matrix")
     translation = [row[0] for row in rows]
-    # US-align prints x' = t + Ux. The atlas viewer applies row vectors xR + t.
     rotation = np.asarray([row[1:] for row in rows], dtype=float).T
-    transform = {
+    return {
         "rotation": rotation.round(10).tolist(),
         "translation": np.asarray(translation).round(10).tolist(),
+    }, summary
+
+
+def run_usalign(usalign: str, mobile: Path, reference: Path):
+    result = subprocess.run(
+        [
+            usalign,
+            str(mobile),
+            str(reference),
+            "-outfmt",
+            "2",
+            "-m",
+            "-",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"US-align failed ({result.returncode}): {result.stderr[-500:]}"
+        )
+    return parse_usalign(result.stdout)
+
+
+def sequence_components(
+    segment_ids: list[str],
+    accession_by_segment: dict[str, str],
+    blast: pd.DataFrame,
+    evalue_threshold: float,
+    coverage_threshold: float,
+) -> list[list[str]]:
+    parent = {segment_id: segment_id for segment_id in segment_ids}
+
+    def find(item):
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left, right):
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[max(left_root, right_root)] = min(left_root, right_root)
+
+    for index, left in enumerate(segment_ids):
+        for right in segment_ids[index + 1:]:
+            if accession_by_segment[left] == accession_by_segment[right]:
+                union(left, right)
+
+    accessions = set(accession_by_segment.values())
+    selected = blast[
+        blast.q.isin(accessions)
+        & blast.t.isin(accessions)
+        & (blast.evalue <= evalue_threshold)
+        & (blast.min_coverage >= coverage_threshold)
+    ]
+    related = {
+        tuple(sorted((str(row.q), str(row.t))))
+        for row in selected.itertuples()
     }
-    return transform, summary
+    for index, left in enumerate(segment_ids):
+        for right in segment_ids[index + 1:]:
+            pair = tuple(
+                sorted(
+                    (
+                        accession_by_segment[left],
+                        accession_by_segment[right],
+                    )
+                )
+            )
+            if pair in related:
+                union(left, right)
+
+    groups = {}
+    for segment_id in segment_ids:
+        groups.setdefault(find(segment_id), []).append(segment_id)
+    return sorted(
+        (sorted(group) for group in groups.values()),
+        key=lambda group: (-len(group), group[0]),
+    )
+
+
+def configured_tool(value, name, required=True):
+    raw = str(value or "").strip()
+    return resolve_executable(raw, name, required=required and bool(raw))
 
 
 members = pd.read_csv(snakemake.input.members)
@@ -75,17 +202,65 @@ qc = pd.read_csv(snakemake.input.qc)
 sequences = fasta_records(snakemake.input.seqs)
 pdb_dir = Path(snakemake.input.pdb_dir)
 output = Path(snakemake.output.json)
+assets_root = Path(snakemake.output.assets)
 output.parent.mkdir(parents=True, exist_ok=True)
-
-def configured_tool(value, name):
-    raw = str(value or "").strip()
-    return resolve_executable(raw, name, required=bool(raw))
-
+if assets_root.exists():
+    shutil.rmtree(assets_root)
+assets_root.mkdir(parents=True)
+if not bool(snakemake.params.enabled):
+    output.write_text(
+        json.dumps({"schema_version": 2, "families": {}}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"domain workbench: disabled -> {output}")
+    sys.exit(0)
 
 mafft = configured_tool(snakemake.params.mafft, "MAFFT")
 fasttree = configured_tool(snakemake.params.fasttree, "FastTree")
 usalign = configured_tool(snakemake.params.usalign, "US-align")
+foldmason = configured_tool(snakemake.params.foldmason, "FoldMason")
+foldtree_enabled = bool(snakemake.params.foldtree_enabled)
+foldtree_dir = str(snakemake.params.foldtree_dir or "").strip()
+foldtree_snakemake = (
+    configured_tool(snakemake.params.foldtree_snakemake, "FoldTree Snakemake")
+    if foldtree_enabled
+    else ""
+)
+foldtree_foldseek = (
+    configured_tool(snakemake.params.foldtree_foldseek, "FoldTree Foldseek")
+    if foldtree_enabled
+    else ""
+)
 threads = max(1, int(snakemake.threads))
+pair_threshold = float(snakemake.params.pair_threshold)
+
+blast_columns = [
+    "query",
+    "target",
+    "pident",
+    "alnlen",
+    "evalue",
+    "bitscore",
+    "qlen",
+    "slen",
+]
+try:
+    blast = pd.read_csv(snakemake.input.blastp, sep="\t", names=blast_columns)
+except (pd.errors.EmptyDataError, FileNotFoundError):
+    blast = pd.DataFrame(columns=blast_columns)
+if len(blast):
+    blast["q"] = blast["query"].map(protein_id)
+    blast["t"] = blast["target"].map(protein_id)
+    blast["min_coverage"] = np.minimum(
+        pd.to_numeric(blast.alnlen, errors="coerce")
+        / pd.to_numeric(blast.qlen, errors="coerce"),
+        pd.to_numeric(blast.alnlen, errors="coerce")
+        / pd.to_numeric(blast.slen, errors="coerce"),
+    )
+else:
+    blast["q"] = pd.Series(dtype=str)
+    blast["t"] = pd.Series(dtype=str)
+    blast["min_coverage"] = pd.Series(dtype=float)
 
 pdb_paths = {}
 for row in qc.itertuples():
@@ -94,61 +269,183 @@ for row in qc.itertuples():
     candidates = [
         pdb_dir / str(filename),
         pdb_dir / f"{accession}.pdb",
+        *sorted(pdb_dir.glob(f"*{accession}*.pdb")),
     ]
-    candidates.extend(sorted(pdb_dir.glob(f"*{accession}*.pdb")))
     pdb_paths[accession] = next(
         (candidate for candidate in candidates if candidate.is_file()), None
     )
 
-payload = {"schema_version": 1, "families": {}}
-with tempfile.TemporaryDirectory(prefix="suss-domain-workbench-") as tmp:
-    tmpdir = Path(tmp)
-    for family, group in members.groupby("domain_family", sort=False):
-        family = str(family)
-        family_edges = edges[edges.domain_family.astype(str) == family].copy()
-        segment_ids = sorted(group.segment_id.astype(str))
-        scores = {segment_id: 0.0 for segment_id in segment_ids}
-        for edge in family_edges.itertuples():
-            weight = float(edge.lddt) if pd.notna(edge.lddt) else 0.0
-            scores[str(edge.source)] = scores.get(str(edge.source), 0.0) + weight
-            scores[str(edge.target)] = scores.get(str(edge.target), 0.0) + weight
-        hub = min(segment_ids, key=lambda segment_id: (-scores[segment_id], segment_id))
+payload = {"schema_version": 2, "families": {}}
+for family, group in members.groupby("domain_family", sort=False):
+    family = str(family)
+    family_dir = assets_root / family
+    structure_dir = family_dir / "structures"
+    sequence_dir = family_dir / "sequences"
+    structure_dir.mkdir(parents=True)
+    sequence_dir.mkdir()
+    family_edges = edges[edges.domain_family.astype(str) == family].copy()
+    segment_ids = sorted(group.segment_id.astype(str))
+    scores = {segment_id: 0.0 for segment_id in segment_ids}
+    for edge in family_edges.itertuples():
+        weight = float(edge.lddt) if pd.notna(edge.lddt) else 0.0
+        scores[str(edge.source)] = scores.get(str(edge.source), 0.0) + weight
+        scores[str(edge.target)] = scores.get(str(edge.target), 0.0) + weight
+    hub = min(segment_ids, key=lambda segment_id: (-scores[segment_id], segment_id))
 
-        segment_files = {}
-        segment_sequences = {}
-        id_map = {}
-        for row in group.itertuples():
-            segment_id = str(row.segment_id)
-            path = pdb_paths.get(str(row.acc))
-            if path:
-                text = segment_pdb(path, int(row.start), int(row.end))
-                if text:
-                    segment_path = tmpdir / f"{family}_{safe_name(segment_id)}.pdb"
-                    segment_path.write_text(text, encoding="utf-8")
-                    segment_files[segment_id] = segment_path
-            sequence = sequences.get(str(row.acc), "")
-            if sequence:
-                segment_sequences[segment_id] = sequence[int(row.start) - 1:int(row.end)]
-            id_map[segment_id] = safe_name(segment_id)
+    segment_files = {}
+    segment_sequences = {}
+    parent_sequences = {}
+    accession_by_segment = {}
+    id_map = {}
+    for row in group.itertuples():
+        segment_id = str(row.segment_id)
+        accession = str(row.acc)
+        safe_id = safe_name(segment_id)
+        id_map[segment_id] = safe_id
+        accession_by_segment[segment_id] = accession
+        path = pdb_paths.get(accession)
+        if path:
+            text = segment_pdb(path, int(row.start), int(row.end))
+            if text:
+                segment_path = structure_dir / f"{safe_id}.pdb"
+                segment_path.write_text(text, encoding="utf-8")
+                segment_files[segment_id] = segment_path
+        sequence = sequences.get(accession, "")
+        if sequence:
+            parent_sequences[accession] = sequence
+            segment_sequences[segment_id] = sequence[
+                int(row.start) - 1:int(row.end)
+            ]
+    reverse_ids = {value: key for key, value in id_map.items()}
+    write_fasta(
+        sequence_dir / f"{family}_domain_segments.fasta",
+        segment_sequences,
+        id_map,
+    )
+    (sequence_dir / f"{family}_parent_proteins.fasta").write_text(
+        "".join(
+            f">{accession}\n{sequence}\n"
+            for accession, sequence in sorted(parent_sequences.items())
+        ),
+        encoding="utf-8",
+    )
 
-        status = {
-            "msa": "not_run_tool_missing" if not mafft else "not_applicable",
-            "tree": "not_run_tool_missing" if not fasttree else "not_applicable",
-            "superposition": "not_run_tool_missing" if not usalign else "not_applicable",
-        }
-        msa_records = {}
-        tree = ""
-        if mafft and len(segment_sequences) >= 2:
-            fasta_path = tmpdir / f"{family}.fasta"
-            fasta_path.write_text(
-                "".join(
-                    f">{id_map[segment_id]}\n{sequence}\n"
-                    for segment_id, sequence in segment_sequences.items()
-                ),
-                encoding="utf-8",
+    status = {
+        "foldmason": "not_applicable",
+        "sequence": "not_applicable",
+        "foldtree": "not_applicable",
+        "superposition": "not_applicable",
+    }
+    structural_msa = {}
+    three_di_msa = {}
+    foldmason_guide_tree = ""
+    structural_scores = []
+    if foldmason and len(segment_files) >= 2:
+        prefix = family_dir / f"{family}_foldmason"
+        temp_dir = family_dir / "foldmason_tmp"
+        command = [
+            foldmason,
+            "easy-msa",
+            *[str(segment_files[segment_id]) for segment_id in segment_ids
+              if segment_id in segment_files],
+            str(prefix),
+            str(temp_dir),
+            "--report-mode",
+            "1",
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"{family}: FoldMason failed ({result.returncode}): "
+                + "\n".join(result.stderr.splitlines()[-20:])
             )
+        aa_path = Path(f"{prefix}_aa.fa")
+        di_path = Path(f"{prefix}_3di.fa")
+        structural_msa = read_fasta_text(
+            aa_path.read_text(encoding="utf-8"), reverse_ids
+        )
+        three_di_msa = read_fasta_text(
+            di_path.read_text(encoding="utf-8"), reverse_ids
+        )
+        guide_path = Path(f"{prefix}.nw")
+        if guide_path.is_file():
+            foldmason_guide_tree = guide_path.read_text(
+                encoding="utf-8"
+            ).strip()
+        status["foldmason"] = "complete"
+
+        normalized_msa = family_dir / f"{family}_foldmason_normalized.fasta"
+        write_fasta(normalized_msa, structural_msa, id_map)
+        database = family_dir / f"{family}_foldmason_db"
+        score_json = family_dir / f"{family}_column_lddt.json"
+        subprocess.run(
+            [
+                foldmason,
+                "createdb",
+                str(structure_dir),
+                str(database),
+                "--threads",
+                "1",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                foldmason,
+                "msa2lddtjson",
+                str(database),
+                str(normalized_msa),
+                str(score_json),
+                "--pair-threshold",
+                str(pair_threshold),
+                "--threads",
+                str(threads),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        alignment_length = len(next(iter(structural_msa.values())))
+        structural_scores = foldmason_column_scores(
+            json.loads(score_json.read_text(encoding="utf-8")),
+            alignment_length,
+        )
+
+    sequence_subgroups = []
+    components = sequence_components(
+        segment_ids,
+        accession_by_segment,
+        blast,
+        float(snakemake.params.blast_evalue),
+        float(snakemake.params.blast_coverage),
+    )
+    for subgroup_index, component in enumerate(components):
+        subgroup_id = f"{family}.S{subgroup_index}"
+        subgroup = {
+            "id": subgroup_id,
+            "members": component,
+            "status": "sequence_singleton",
+            "msa": {},
+            "newick": "",
+        }
+        subgroup_sequences = {
+            segment_id: segment_sequences[segment_id]
+            for segment_id in component
+            if segment_id in segment_sequences
+        }
+        if mafft and len(subgroup_sequences) >= 2:
+            input_fasta = sequence_dir / f"{subgroup_id}.fasta"
+            write_fasta(input_fasta, subgroup_sequences, id_map)
             result = subprocess.run(
-                [mafft, "--auto", "--thread", str(threads), str(fasta_path)],
+                [mafft, "--auto", "--thread", str(threads), str(input_fasta)],
                 capture_output=True,
                 text=True,
                 timeout=1800,
@@ -156,26 +453,14 @@ with tempfile.TemporaryDirectory(prefix="suss-domain-workbench-") as tmp:
             )
             if result.returncode != 0 or not result.stdout.lstrip().startswith(">"):
                 raise RuntimeError(
-                    f"{family}: domain MAFFT failed ({result.returncode}): "
+                    f"{subgroup_id}: MAFFT failed ({result.returncode}): "
                     + "\n".join(result.stderr.splitlines()[-20:])
                 )
-            reverse_ids = {value: key for key, value in id_map.items()}
-            current = None
-            chunks = []
-            for line in result.stdout.splitlines():
-                if line.startswith(">"):
-                    if current is not None:
-                        msa_records[reverse_ids.get(current, current)] = "".join(chunks)
-                    current = line[1:].split()[0]
-                    chunks = []
-                elif current is not None:
-                    chunks.append(line.strip())
-            if current is not None:
-                msa_records[reverse_ids.get(current, current)] = "".join(chunks)
-            status["msa"] = "complete"
+            subgroup["msa"] = read_fasta_text(result.stdout, reverse_ids)
+            msa_path = sequence_dir / f"{subgroup_id}_MAFFT.fasta"
+            msa_path.write_text(result.stdout, encoding="utf-8")
+            subgroup["status"] = "complete"
             if fasttree:
-                msa_path = tmpdir / f"{family}.aln"
-                msa_path.write_text(result.stdout, encoding="utf-8")
                 tree_result = subprocess.run(
                     [fasttree, "-wag", str(msa_path)],
                     capture_output=True,
@@ -185,84 +470,182 @@ with tempfile.TemporaryDirectory(prefix="suss-domain-workbench-") as tmp:
                 )
                 if tree_result.returncode != 0 or ";" not in tree_result.stdout:
                     raise RuntimeError(
-                        f"{family}: domain FastTree failed ({tree_result.returncode})"
+                        f"{subgroup_id}: FastTree failed "
+                        f"({tree_result.returncode})"
                     )
-                tree = tree_result.stdout.strip()
-                status["tree"] = "complete"
+                subgroup["newick"] = tree_result.stdout.strip()
+                (sequence_dir / f"{subgroup_id}_FastTree.nwk").write_text(
+                    subgroup["newick"] + "\n", encoding="utf-8"
+                )
+        sequence_subgroups.append(subgroup)
+    if any(group["status"] == "complete" for group in sequence_subgroups):
+        status["sequence"] = "complete"
 
-        transforms = {}
-        fit_stats = {}
-        identity = {
-            "rotation": np.eye(3).tolist(),
-            "translation": [0.0, 0.0, 0.0],
+    transforms = {}
+    fit_stats = {}
+    labels = [segment_id for segment_id in segment_ids if segment_id in segment_files]
+    usalign_matrix = np.full((len(labels), len(labels)), np.nan)
+    np.fill_diagonal(usalign_matrix, 1.0)
+    identity = {
+        "rotation": np.eye(3).tolist(),
+        "translation": [0.0, 0.0, 0.0],
+    }
+    if hub in segment_files:
+        transforms[hub] = identity
+        fit_stats[hub] = {
+            "reference": hub,
+            "method": "reference",
+            "tm_mobile": 1.0,
+            "tm_reference": 1.0,
+            "rmsd": 0.0,
         }
-        if hub in segment_files:
-            transforms[hub] = identity
-            fit_stats[hub] = {
-                "reference": hub,
-                "method": "reference",
-                "tm_mobile": 1.0,
-                "tm_reference": 1.0,
-                "rmsd": 0.0,
+    if usalign and len(labels) >= 2:
+        status["superposition"] = "complete"
+        pair_jobs = [
+            (left_index, right_index, labels[left_index], labels[right_index])
+            for left_index in range(len(labels))
+            for right_index in range(left_index + 1, len(labels))
+        ]
+        with ThreadPoolExecutor(max_workers=threads) as executor:
+            futures = {
+                executor.submit(
+                    run_usalign,
+                    usalign,
+                    segment_files[left],
+                    segment_files[right],
+                ): (left_index, right_index, left, right)
+                for left_index, right_index, left, right in pair_jobs
             }
-            if usalign:
-                status["superposition"] = "complete"
-                for segment_id, mobile_path in segment_files.items():
-                    if segment_id == hub:
-                        continue
-                    result = subprocess.run(
-                        [
-                            usalign,
-                            str(mobile_path),
-                            str(segment_files[hub]),
-                            "-outfmt",
-                            "2",
-                            "-m",
-                            "-",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=180,
-                        check=False,
-                    )
-                    if result.returncode != 0:
-                        raise RuntimeError(
-                            f"{family}/{segment_id}: US-align failed "
-                            f"({result.returncode}): {result.stderr[-500:]}"
-                        )
-                    transform, stats = parse_usalign(result.stdout)
-                    transforms[segment_id] = transform
-                    fit_stats[segment_id] = {
+            for future in as_completed(futures):
+                left_index, right_index, left, right = futures[future]
+                transform, stats = future.result()
+                score = min(stats["tm_mobile"], stats["tm_reference"])
+                usalign_matrix[left_index, right_index] = score
+                usalign_matrix[right_index, left_index] = score
+                if right == hub:
+                    transforms[left] = transform
+                    fit_stats[left] = {
                         "reference": hub,
                         "method": "US-align domain segment",
                         **stats,
                     }
+                elif left == hub:
+                    reverse_transform, reverse_stats = run_usalign(
+                        usalign, segment_files[right], segment_files[left]
+                    )
+                    transforms[right] = reverse_transform
+                    fit_stats[right] = {
+                        "reference": hub,
+                        "method": "US-align domain segment",
+                        **reverse_stats,
+                    }
+        pd.DataFrame(
+            usalign_matrix, index=labels, columns=labels
+        ).to_csv(family_dir / f"{family}_USalign_TM.csv")
 
-        lddt_values = pd.to_numeric(
-            family_edges.get("lddt", pd.Series(dtype=float)), errors="coerce"
-        ).dropna()
-        alntm_values = pd.to_numeric(
-            family_edges.get("alntmscore", pd.Series(dtype=float)),
-            errors="coerce",
-        ).dropna()
-        payload["families"][family] = {
-            "hub": hub,
-            "members": segment_ids,
-            "transforms": transforms,
-            "fit_stats": fit_stats,
-            "sequence_msa": msa_records,
-            "sequence_newick": tree,
-            "status": status,
-            "mean_lddt": (
-                round(float(lddt_values.mean()), 4) if len(lddt_values) else None
-            ),
-            "mean_alntm": (
-                round(float(alntm_values.mean()), 4) if len(alntm_values) else None
-            ),
+    foldtree_trees = {}
+    foldtree_status = {}
+    if foldtree_enabled and len(segment_files) >= 3:
+        metrics = [str(metric) for metric in snakemake.params.foldtree_metrics]
+        foldtree_root = family_dir / "foldtree"
+        output_paths = [
+            foldtree_root / f"{family}_{metric}.nwk" for metric in metrics
+        ]
+        safe_structures = {
+            id_map[segment_id]: path
+            for segment_id, path in segment_files.items()
         }
+        foldtree_status = run_foldtree_family(
+            family=family,
+            structures=safe_structures,
+            family_root=foldtree_root,
+            output_paths=output_paths,
+            metrics=metrics,
+            foldtree_dir=foldtree_dir,
+            snakemake_bin=foldtree_snakemake,
+            foldseek_bin=foldtree_foldseek,
+            extra_path=snakemake.params.foldtree_extra_path,
+            rooting=dict(snakemake.params.foldtree_rooting),
+        )
+        foldtree_trees = {
+            metric: path.read_text(encoding="utf-8").strip()
+            for metric, path in zip(metrics, output_paths)
+            if path.is_file()
+        }
+        status["foldtree"] = "complete"
+
+    lddt_values = pd.to_numeric(
+        family_edges.get("lddt", pd.Series(dtype=float)), errors="coerce"
+    ).dropna()
+    alntm_values = pd.to_numeric(
+        family_edges.get("alntmscore", pd.Series(dtype=float)),
+        errors="coerce",
+    ).dropna()
+    primary_subgroup = next(
+        (
+            group
+            for group in sequence_subgroups
+            if hub in group["members"] and group["status"] == "complete"
+        ),
+        next(
+            (
+                group
+                for group in sequence_subgroups
+                if group["status"] == "complete"
+            ),
+            {},
+        ),
+    )
+    hub_structural_conservation = {}
+    if (
+        hub in structural_msa
+        and structural_scores
+        and len(structural_msa[hub]) == len(structural_scores)
+    ):
+        residue = int(
+            group.loc[group.segment_id.astype(str) == hub, "start"].iloc[0]
+        )
+        for symbol, score in zip(structural_msa[hub], structural_scores):
+            if symbol in {"-", "."}:
+                continue
+            if score is not None and math.isfinite(float(score)):
+                hub_structural_conservation[residue] = round(float(score), 6)
+            residue += 1
+    payload["families"][family] = {
+        "hub": hub,
+        "members": segment_ids,
+        "member_ids": id_map,
+        "transforms": transforms,
+        "fit_stats": fit_stats,
+        "structural_msa": structural_msa,
+        "three_di_msa": three_di_msa,
+        "foldmason_guide_newick": foldmason_guide_tree,
+        "structural_conservation": structural_scores,
+        "hub_structural_conservation": hub_structural_conservation,
+        "sequence_msa": primary_subgroup.get("msa", {}),
+        "sequence_newick": primary_subgroup.get("newick", ""),
+        "sequence_subgroups": sequence_subgroups,
+        "usalign_labels": labels,
+        "usalign_matrix": [
+            [None if not math.isfinite(value) else round(float(value), 6)
+             for value in row]
+            for row in usalign_matrix
+        ],
+        "foldtree_trees": foldtree_trees,
+        "foldtree_status": foldtree_status,
+        "tree_label_map": {value: key for key, value in id_map.items()},
+        "status": status,
+        "mean_lddt": (
+            round(float(lddt_values.mean()), 4) if len(lddt_values) else None
+        ),
+        "mean_alntm": (
+            round(float(alntm_values.mean()), 4) if len(alntm_values) else None
+        ),
+    }
 
 output.write_text(
-    json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+    json.dumps(json_safe(payload), indent=2, sort_keys=True, allow_nan=False)
+    + "\n",
     encoding="utf-8",
 )
 print(

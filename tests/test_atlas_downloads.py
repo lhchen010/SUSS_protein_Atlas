@@ -1,5 +1,6 @@
 import base64
 import io
+import json
 import sys
 import tempfile
 import zipfile
@@ -281,6 +282,7 @@ def test_domain_search_gene_aliases_include_accessions_and_segments():
         in renderer
     )
     assert "[m.acc,m.segment_id,m.gene]" in renderer
+    assert "segments overlap this label" in renderer
 
 
 def test_singleton_p2rank_display_uses_probability_not_ranking_score():
@@ -345,6 +347,29 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
         "source_family", "target_family", "n_edges", "mean_probability",
         "max_probability", "mean_lddt", "max_lddt", "mean_aligned_residues",
     ]).to_csv(results / "domain_cross_edges.csv", index=False)
+    (results / "domain_workbench.json").write_text(json.dumps({
+        "schema_version": 2,
+        "families": {
+            "D0": {
+                "hub": "PROT1:1-3",
+                "members": ["PROT1:1-3"],
+                "transforms": {},
+                "fit_stats": {},
+                "structural_msa": {},
+                "three_di_msa": {},
+                "foldmason_guide_newick": "(PROT1__1-3:0.1);",
+                "tree_label_map": {"PROT1__1-3": "PROT1:1-3"},
+                "sequence_msa": {},
+                "sequence_newick": "",
+                "sequence_subgroups": [],
+                "usalign_labels": ["PROT1:1-3"],
+                "usalign_matrix": [[1.0]],
+                "foldtree_trees": {},
+                "foldtree_status": {},
+                "status": {},
+            }
+        },
+    }))
     out_html = results / "atlas.html"
 
     built = html_builder.build_atlas(
@@ -381,6 +406,9 @@ def test_build_atlas_embeds_singleton_as_independent_payload(tmp_path):
     assert '"pocket_residues": [2]' in html
     assert '"pocket_metric": "probability"' in html
     assert '"pocket_value": 0.72' in html
+    assert '"package_zip_b64": "' in html
+    assert '"parent_structures_zip_b64": "' in html
+    assert "FoldMason structural guide tree" in html
     assert html.count("ATOM      1") == 1
 
 
@@ -447,16 +475,22 @@ def test_backend_atlas_uses_lazy_artifacts_and_streaming_routes():
     portal = (ROOT / "portal" / "suss_portal.py").read_text()
 
     assert "function fetchStructure" in renderer
+    assert "function fetchReference" in renderer
+    assert "function hasReference" in renderer
     assert 'artifactUrl("structure",acc)' in renderer
+    assert 'artifactUrl("reference",key)' in renderer
     assert 'artifactUrl("xlsx",fam)' in renderer
     assert 'artifactUrl("structures",fam)' in renderer
     assert "hasStruct=BACKEND.enabled||" in renderer
     assert "if(!pdb&&BACKEND.enabled&&!structureFetchFailed[m.acc])" in renderer
     assert 'if mode == "backend"' in builder
     assert "store_download" in builder
+    assert "store_reference" in builder
+    assert "REFAVAIL=REFAVAIL" in builder
     assert 'elif u.path == "/artifact"' in portal
     assert "def _stream_file" in portal
     assert 'html_mode="backend"' in portal
+    assert 'kind == "reference"' in portal
 
 
 def test_network_search_supports_annotation_fields_and_highlighting():
@@ -522,6 +556,7 @@ def test_sequence_viewer_and_alignment_downloads_are_exposed_without_singleton_m
 def test_domain_family_mode_and_structure_search_are_exposed():
     prefix = (ROOT / "workflow" / "builders" / "template" / "prefix.html").read_text()
     renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
+    builder = (ROOT / "workflow" / "builders" / "html_builder.py").read_text()
     portal = (ROOT / "portal" / "suss_portal.py").read_text()
 
     assert 'id="modedomains"' in prefix
@@ -533,9 +568,18 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "function renderDomainStructure" in renderer
     assert "function toggleDomainSelection" in renderer
     assert "function selectDomainMembers" in renderer
-    assert "function dlDomainSuperposition" in renderer
+    assert "function dlDomainSelectedSuperposition" in renderer
     assert 'Superpose selected (' in renderer
-    assert "Parent context" in renderer
+    assert "Selected full proteins aligned" in renderer
+    assert "All domain structures ZIP" in renderer
+    assert "All parent structures ZIP" in renderer
+    assert "Complete D-family ZIP" in renderer
+    assert "Detector-native pocket records stay in the workbook/package" in builder
+    assert "function buildDomainTreesPane" in renderer
+    assert "function buildDomainConservationPane" in renderer
+    assert "FoldTree structural relationship" in renderer
+    assert "MAFFT amino-acid MSA" in renderer
+    assert "FoldMason structural MSA" in renderer
     assert "domain-architecture" in renderer
     assert "DOMAIN_EDGES" in renderer
     assert "DNET.edges" in renderer
@@ -552,19 +596,164 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "except subprocess.TimeoutExpired" in portal
     assert "shutil.rmtree(search_dir, ignore_errors=True)" in portal
     assert "Domain-aware Foldseek" in portal
+    assert 'name=analysis_scope value=both checked' in portal
+    assert 'name=analysis_scope value=domain' in portal
+    assert 'analysis_scope in ("full", "both")' in portal
+    assert "F-family sequence MSA / tree" in portal
+    assert 'kind == "domain_package"' in portal
+    assert 'kind == "domain_parents"' in portal
+
+
+def test_tree_svg_titles_report_the_actual_evidence_source():
+    sequence_svg = html_builder._newick_to_svg(
+        "(A:0.1,B:0.2);", title="Sequence tree · MAFFT + FastTree"
+    )
+    structural_svg = html_builder._newick_to_svg(
+        "(A:0.1,B:0.2);", title="FoldTree structural tree · lddt"
+    )
+
+    assert "Sequence tree · MAFFT + FastTree" in sequence_svg
+    assert "FoldTree structural tree · lddt" in structural_svg
+
+
+def test_domain_downloads_include_segments_parents_and_manifest():
+    members = [
+        {"segment_id": "A:1-2", "acc": "A", "start": 1, "end": 2},
+        {"segment_id": "B:2-3", "acc": "B", "start": 2, "end": 3},
+    ]
+    structures = {
+        "A": _pdb([[0, 0, 0], [1, 0, 0], [2, 0, 0]]),
+        "B": _pdb([[0, 1, 0], [1, 1, 0], [2, 1, 0]]),
+    }
+
+    segment_zip = base64.b64decode(
+        html_builder._domain_structures_zip_b64(
+            "D0", members, structures, segments_only=True
+        )
+    )
+    parent_zip = base64.b64decode(
+        html_builder._domain_structures_zip_b64(
+            "D0", members, structures, segments_only=False
+        )
+    )
+
+    with zipfile.ZipFile(io.BytesIO(segment_zip)) as archive:
+        assert "D0_domain_structures/A_1-2.pdb" in archive.namelist()
+        assert "D0_domain_structures/manifest.csv" in archive.namelist()
+    with zipfile.ZipFile(io.BytesIO(parent_zip)) as archive:
+        assert "D0_parent_structures/A.pdb" in archive.namelist()
+        assert "D0_parent_structures/B.pdb" in archive.namelist()
+
+    package = base64.b64decode(
+        html_builder._domain_package_b64(
+            "D0",
+            members,
+            [],
+            {
+                "hub": "A:1-2",
+                "transforms": {"A:1-2": {"rotation": [], "translation": []}},
+                "fit_stats": {},
+                "structural_msa": {"A:1-2": "AA"},
+                "three_di_msa": {"A:1-2": "xx"},
+                "sequence_msa": {},
+                "sequence_subgroups": [
+                    {
+                        "id": "S0",
+                        "msa": {"A:1-2": "AA"},
+                        "newick": "(A__1-2:0.1);",
+                    }
+                ],
+                "foldmason_guide_newick": "(A__1-2:0.1);",
+                "foldtree_trees": {},
+                "foldtree_status": {},
+                "structural_conservation": [0.8, None],
+                "usalign_labels": ["A:1-2"],
+                "usalign_matrix": [[1.0]],
+                "status": {"foldmason": "complete"},
+            },
+            structures,
+            {"A": "AAA", "B": "BBB"},
+            base64.b64encode(b"workbook").decode(),
+        )
+    )
+    with zipfile.ZipFile(io.BytesIO(package)) as archive:
+        names = archive.namelist()
+        assert "D0_domain_family/trees/FoldMason_guide.nwk" in names
+        assert (
+            "D0_domain_family/alignments/sequence_subgroups/S0_MAFFT.fasta"
+            in names
+        )
+        assert "D0_domain_family/superposition/transforms.json" in names
+        assert (
+            "D0_domain_family/tables/foldmason_structural_conservation.csv"
+            in names
+        )
+
+
+def test_domain_workbook_keeps_explicit_sequence_msa_status_when_not_applicable():
+    encoded = html_builder._domain_xlsx_b64(
+        "D0",
+        [
+            {
+                "segment_id": "A:1-2",
+                "acc": "A",
+                "start": 1,
+                "end": 2,
+                "expression": {},
+                "p2rank": {},
+                "fpocket": {},
+                "esm_values": {},
+                "overlap_annotations": [],
+            }
+        ],
+        [],
+        {
+            "sequence_msa": {},
+            "structural_msa": {"A:1-2": "AA"},
+            "three_di_msa": {"A:1-2": "xx"},
+            "sequence_subgroups": [],
+            "usalign_labels": ["A:1-2"],
+            "usalign_matrix": [[1.0]],
+            "fit_stats": {},
+            "structural_conservation": [0.8, None],
+        },
+    )
+
+    workbook = pd.ExcelFile(io.BytesIO(base64.b64decode(encoded)))
+    assert "sequence_MSA" in workbook.sheet_names
+    sequence_msa = workbook.parse("sequence_MSA")
+    assert sequence_msa.loc[0, "status"] == "not_applicable"
+    assert "No reciprocal-coverage" in sequence_msa.loc[0, "reason"]
 
 
 def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
     snakefile = (ROOT / "workflow" / "Snakefile").read_text()
     pocket_script = (ROOT / "workflow" / "scripts" / "sasa_pocket.py").read_text()
+    esm_script = (ROOT / "workflow" / "scripts" / "esm_scan.py").read_text()
     portal = (ROOT / "portal" / "suss_portal.py").read_text()
 
     assert 'get("p2rank_profile", "alphafold")' in snakefile
+    assert "threads: 4" in snakefile
     assert 'p2cmd.extend(["-c", p2rank_profile])' in pocket_script
     assert "shutil.rmtree(out_dir, ignore_errors=True)" in pocket_script
     assert "expected one P2Rank predictions CSV" in pocket_script
+    assert "targets = sorted(keep)" in pocket_script
+    assert "ThreadPoolExecutor(max_workers=workers)" in pocket_script
+    assert "profile_marker" in pocket_script
+    assert "cached_profiles" in pocket_script
+    assert 'scope == "all_proteins"' in esm_script
+    assert 'scope == "representatives"' in esm_script
+    assert "set(family_refs.values()) | singletons" in esm_script
+    assert 'f"*_{accession}-res-in-matrix.csv"' in esm_script
+    domain_script = (
+        ROOT / "workflow" / "scripts" / "domain_workbench.py"
+    ).read_text()
+    assert "json.dumps(json_safe(payload)" in domain_script
+    assert "not math.isfinite(value)" in domain_script
+    assert "domain workbench: disabled" in domain_script
     assert "AlphaFold / predicted structures" in portal
     assert 'cfg.setdefault("pocket", {}).update' in portal
+    assert 'domain_foldtree=ck("domain_foldtree")' in portal
 
 
 def test_full_length_rnaseq_renderer_has_explicit_missing_state():
