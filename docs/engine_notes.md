@@ -30,7 +30,12 @@ Full-length branch: qc → foldseek → **cluster (checkpoint)** → classify �
 Domain branch: qc → local Foldseek segments → D-family graph → domain workbench. Each D-family
 workbench stores cropped structures, FoldMason AA/3Di MSA, a FoldMason guide tree, reciprocal-
 coverage-controlled sequence subgroups with MAFFT/FastTree, all-pairs US-align, complete-parent
-superposition transforms, structural conservation, and optional FoldTree output.
+superposition transforms, FoldMason-aligned domain sequence identity, structural conservation,
+eligible subgroup Rate4Site sequence conservation, and optional FoldTree output.
+
+The clustering checkpoint owns only `results/family_members/`. Downstream F-family analyses live
+under `results/families/`; this separation prevents a checkpoint rerun from deleting completed
+FoldMason, FoldTree, similarity-matrix, or conservation artifacts.
 
 Shared per-protein evidence: FreeSASA, P2Rank, fpocket, ESM-Scan, annotation, DeepTMHMM, and
 optional RNA-seq. Pocket and ESM records are calculated per protein and reused by F, D, and

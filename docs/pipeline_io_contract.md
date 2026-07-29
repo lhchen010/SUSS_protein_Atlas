@@ -24,10 +24,10 @@ signals.foldtree_metrics=[foldtree,alntmscore,lddt], esm_model=esm1b, plm_strate
 |---|---|---|---|---|---|---|
 | 1 | qc | input_dir/*.pdb | qc.csv (acc,length,mean_plddt,frac_conf,pass) | custom (CA B-factor parsing) | min_plddt,max_length,min_length | all |
 | 2 | foldseek | QC-passing PDB | foldseek_allvsall.tsv | Foldseek easy-search, global alignment | alignment_type, exhaustive_search | all |
-| 3 | cluster | Foldseek TSV + qc.csv | families.csv, members.csv, edges.csv | igraph + Leiden | foldseek_tm, reciprocal coverage, tm_symmetric, resolution, min size | all |
+| 3 | cluster | Foldseek TSV + qc.csv | families.csv, members.csv, edges.csv, family_members/ | igraph + Leiden | foldseek_tm, reciprocal coverage, tm_symmetric, resolution, min size | all |
 | 4 | foldseek_domains | QC-passing PDB | foldseek_domains.tsv | Foldseek easy-search, local 3Di+AA | e-value, sensitivity | all |
 | 5 | domain_cluster | local Foldseek TSV | domain_families/members/edges/cross_edges.csv | interval consolidation + Leiden | probability, aligned length, local lDDT, optional alignment TM/coverage | all |
-| 6 | domain_workbench | D members/edges + sequences/PDB | domain_workbench.json | US-align + MAFFT + FastTree | configured tools | D families |
+| 6 | domain_workbench | D members/edges + sequences/PDB | domain_workbench.json, domain identity matrices, structural/sequence conservation | FoldMason + US-align + MAFFT + FastTree + Rate4Site | configured tools and minimum subgroup size | D families |
 | 7 | classify | BLAST TSV + retained F edges | classification.csv (core_SUSS/…) | qualifying-hit merge | e-value + reciprocal sequence coverage | F edges |
 | 8 | sequence_subgroups | BLAST TSV + F members | sequence_subgroups/edges.csv | connected components | e-value + reciprocal sequence coverage | F families |
 | 9 | msa | F-family member PDB | {fam}.aln, {fam}.fasta | FoldMason | — | F families n≥2 |

@@ -75,6 +75,73 @@ def write_fasta(path: Path, records: dict[str, str], id_map: dict[str, str]):
     )
 
 
+def aligned_identity_matrix(
+    records: dict[str, str], labels: list[str]
+) -> list[list[float | None]]:
+    """Pairwise AA identity over columns where both domain segments have residues."""
+    matrix = []
+    for left in labels:
+        row = []
+        for right in labels:
+            if left == right:
+                row.append(1.0)
+                continue
+            pairs = [
+                (a, b)
+                for a, b in zip(records.get(left, ""), records.get(right, ""))
+                if a not in {"-", "."} and b not in {"-", "."}
+            ]
+            row.append(
+                round(sum(a == b for a, b in pairs) / len(pairs), 6)
+                if pairs
+                else None
+            )
+        matrix.append(row)
+    return matrix
+
+
+def parse_rate4site(path: Path) -> dict[int, float]:
+    """Return positive-is-conserved scores indexed by ungapped reference position."""
+    scores = {}
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = re.match(r"^\s*(\d+)\s+\S\s+(-?[\d.]+)", line.strip())
+        if match:
+            scores[int(match.group(1))] = -float(match.group(2))
+    return scores
+
+
+def map_conservation_to_segments(
+    msa: dict[str, str],
+    reference: str,
+    reference_scores: dict[int, float],
+    starts: dict[str, int],
+) -> dict[str, dict[int, float]]:
+    """Project reference-column Rate4Site scores onto every aligned segment."""
+    reference_alignment = msa.get(reference, "")
+    reference_position = 0
+    column_scores = []
+    for symbol in reference_alignment:
+        if symbol not in {"-", "."}:
+            reference_position += 1
+            column_scores.append(reference_scores.get(reference_position))
+        else:
+            column_scores.append(None)
+
+    mapped = {}
+    for segment_id, aligned in msa.items():
+        residue = int(starts[segment_id]) - 1
+        values = {}
+        for column, symbol in enumerate(aligned):
+            if symbol in {"-", "."}:
+                continue
+            residue += 1
+            score = column_scores[column] if column < len(column_scores) else None
+            if score is not None and math.isfinite(score):
+                values[residue] = round(float(score), 6)
+        mapped[segment_id] = values
+    return mapped
+
+
 def parse_usalign(stdout: str) -> tuple[dict, dict]:
     """Parse US-align outfmt 2 summary and the structure1 -> structure2 matrix."""
     rows = []
@@ -209,7 +276,7 @@ if assets_root.exists():
 assets_root.mkdir(parents=True)
 if not bool(snakemake.params.enabled):
     output.write_text(
-        json.dumps({"schema_version": 2, "families": {}}, indent=2) + "\n",
+        json.dumps({"schema_version": 3, "families": {}}, indent=2) + "\n",
         encoding="utf-8",
     )
     print(f"domain workbench: disabled -> {output}")
@@ -219,6 +286,15 @@ mafft = configured_tool(snakemake.params.mafft, "MAFFT")
 fasttree = configured_tool(snakemake.params.fasttree, "FastTree")
 usalign = configured_tool(snakemake.params.usalign, "US-align")
 foldmason = configured_tool(snakemake.params.foldmason, "FoldMason")
+conservation_enabled = bool(snakemake.params.conservation_enabled)
+rate4site = (
+    configured_tool(snakemake.params.rate4site, "Rate4Site")
+    if conservation_enabled
+    else ""
+)
+minimum_conservation_sequences = int(
+    snakemake.params.min_rate4site_sequences
+)
 foldtree_enabled = bool(snakemake.params.foldtree_enabled)
 foldtree_dir = str(snakemake.params.foldtree_dir or "").strip()
 foldtree_snakemake = (
@@ -275,7 +351,7 @@ for row in qc.itertuples():
         (candidate for candidate in candidates if candidate.is_file()), None
     )
 
-payload = {"schema_version": 2, "families": {}}
+payload = {"schema_version": 3, "families": {}}
 for family, group in members.groupby("domain_family", sort=False):
     family = str(family)
     family_dir = assets_root / family
@@ -296,6 +372,7 @@ for family, group in members.groupby("domain_family", sort=False):
     segment_sequences = {}
     parent_sequences = {}
     accession_by_segment = {}
+    start_by_segment = {}
     id_map = {}
     for row in group.itertuples():
         segment_id = str(row.segment_id)
@@ -303,6 +380,7 @@ for family, group in members.groupby("domain_family", sort=False):
         safe_id = safe_name(segment_id)
         id_map[segment_id] = safe_id
         accession_by_segment[segment_id] = accession
+        start_by_segment[segment_id] = int(row.start)
         path = pdb_paths.get(accession)
         if path:
             text = segment_pdb(path, int(row.start), int(row.end))
@@ -333,6 +411,9 @@ for family, group in members.groupby("domain_family", sort=False):
     status = {
         "foldmason": "not_applicable",
         "sequence": "not_applicable",
+        "sequence_conservation": (
+            "not_applicable" if conservation_enabled else "disabled"
+        ),
         "foldtree": "not_applicable",
         "superposition": "not_applicable",
     }
@@ -420,6 +501,7 @@ for family, group in members.groupby("domain_family", sort=False):
         )
 
     sequence_subgroups = []
+    sequence_conservation = {}
     components = sequence_components(
         segment_ids,
         accession_by_segment,
@@ -435,6 +517,8 @@ for family, group in members.groupby("domain_family", sort=False):
             "status": "sequence_singleton",
             "msa": {},
             "newick": "",
+            "sequence_conservation_status": "not_applicable",
+            "sequence_conservation_reference": "",
         }
         subgroup_sequences = {
             segment_id: segment_sequences[segment_id]
@@ -477,9 +561,67 @@ for family, group in members.groupby("domain_family", sort=False):
                 (sequence_dir / f"{subgroup_id}_FastTree.nwk").write_text(
                     subgroup["newick"] + "\n", encoding="utf-8"
                 )
+            if conservation_enabled:
+                if len(subgroup_sequences) < minimum_conservation_sequences:
+                    subgroup["sequence_conservation_status"] = (
+                        f"requires_at_least_{minimum_conservation_sequences}_sequences"
+                    )
+                else:
+                    reference = hub if hub in component else component[0]
+                    rate4site_path = (
+                        sequence_dir / f"{subgroup_id}_Rate4Site.res"
+                    )
+                    rate4site_result = subprocess.run(
+                        [
+                            rate4site,
+                            "-s",
+                            str(msa_path),
+                            "-a",
+                            id_map[reference],
+                            "-o",
+                            str(rate4site_path),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=1800,
+                        check=False,
+                    )
+                    if (
+                        rate4site_result.returncode != 0
+                        or not rate4site_path.is_file()
+                    ):
+                        raise RuntimeError(
+                            f"{subgroup_id}: Rate4Site failed "
+                            f"({rate4site_result.returncode}): "
+                            + "\n".join(
+                                (
+                                    rate4site_result.stderr
+                                    + rate4site_result.stdout
+                                ).splitlines()[-20:]
+                            )
+                        )
+                    reference_scores = parse_rate4site(rate4site_path)
+                    if not reference_scores:
+                        raise RuntimeError(
+                            f"{subgroup_id}: Rate4Site produced no scores"
+                        )
+                    mapped = map_conservation_to_segments(
+                        subgroup["msa"],
+                        reference,
+                        reference_scores,
+                        start_by_segment,
+                    )
+                    sequence_conservation.update(mapped)
+                    subgroup["sequence_conservation_status"] = "complete"
+                    subgroup["sequence_conservation_reference"] = reference
         sequence_subgroups.append(subgroup)
     if any(group["status"] == "complete" for group in sequence_subgroups):
         status["sequence"] = "complete"
+    if any(
+        group["sequence_conservation_status"] == "complete"
+        for group in sequence_subgroups
+    ):
+        status["sequence_conservation"] = "complete"
 
     transforms = {}
     fit_stats = {}
@@ -611,6 +753,47 @@ for family, group in members.groupby("domain_family", sort=False):
             if score is not None and math.isfinite(float(score)):
                 hub_structural_conservation[residue] = round(float(score), 6)
             residue += 1
+    sequence_identity_labels = [
+        segment_id for segment_id in segment_ids if segment_id in structural_msa
+    ]
+    sequence_identity_matrix = aligned_identity_matrix(
+        structural_msa, sequence_identity_labels
+    )
+    if sequence_identity_labels:
+        pd.DataFrame(
+            sequence_identity_matrix,
+            index=sequence_identity_labels,
+            columns=sequence_identity_labels,
+        ).to_csv(family_dir / f"{family}_domain_sequence_identity.csv")
+    conservation_rows = [
+        {
+            "subgroup": next(
+                (
+                    group["id"]
+                    for group in sequence_subgroups
+                    if segment_id in group["members"]
+                ),
+                "",
+            ),
+            "segment_id": segment_id,
+            "resi": residue,
+            "sequence_conservation": score,
+        }
+        for segment_id, values in sequence_conservation.items()
+        for residue, score in values.items()
+    ]
+    pd.DataFrame(
+        conservation_rows,
+        columns=[
+            "subgroup",
+            "segment_id",
+            "resi",
+            "sequence_conservation",
+        ],
+    ).to_csv(
+        family_dir / f"{family}_domain_sequence_conservation.csv",
+        index=False,
+    )
     payload["families"][family] = {
         "hub": hub,
         "members": segment_ids,
@@ -622,6 +805,10 @@ for family, group in members.groupby("domain_family", sort=False):
         "foldmason_guide_newick": foldmason_guide_tree,
         "structural_conservation": structural_scores,
         "hub_structural_conservation": hub_structural_conservation,
+        "sequence_conservation": sequence_conservation,
+        "sequence_identity_labels": sequence_identity_labels,
+        "sequence_identity_matrix": sequence_identity_matrix,
+        "sequence_identity_method": "FoldMason-aligned domain amino-acid identity",
         "sequence_msa": primary_subgroup.get("msa", {}),
         "sequence_newick": primary_subgroup.get("newick", ""),
         "sequence_subgroups": sequence_subgroups,
