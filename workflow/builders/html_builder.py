@@ -364,6 +364,427 @@ def _structures_zip_b64(fam, structures):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _domain_structures_zip_b64(fam, members, parent_structures, segments_only):
+    """Create a ZIP of cropped domain members or their complete parent proteins."""
+    buf = io.BytesIO()
+    written = set()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        manifest_rows = []
+        for member in members:
+            accession = str(member["acc"])
+            parent = parent_structures.get(accession, "")
+            if not parent:
+                continue
+            if segments_only:
+                name = re.sub(r"[^A-Za-z0-9_.-]+", "_", member["segment_id"])
+                text = "\n".join(
+                    line for line in parent.splitlines()
+                    if line.startswith(("ATOM", "HETATM"))
+                    and line[22:26].strip().lstrip("-").isdigit()
+                    and int(line[22:26]) >= int(member["start"])
+                    and int(line[22:26]) <= int(member["end"])
+                )
+                filename = f"{name}.pdb"
+                archive.writestr(
+                    f"{fam}_domain_structures/{filename}",
+                    text.rstrip() + "\nTER\nEND\n",
+                )
+                manifest_rows.append(
+                    {
+                        "segment_id": member["segment_id"],
+                        "accession": accession,
+                        "start": member["start"],
+                        "end": member["end"],
+                        "file": filename,
+                    }
+                )
+            elif accession not in written:
+                written.add(accession)
+                filename = f"{accession}.pdb"
+                archive.writestr(
+                    f"{fam}_parent_structures/{filename}",
+                    parent.rstrip() + "\n",
+                )
+                manifest_rows.append(
+                    {
+                        "segment_id": "",
+                        "accession": accession,
+                        "start": "",
+                        "end": "",
+                        "file": filename,
+                    }
+                )
+        manifest = pd.DataFrame(
+            manifest_rows,
+            columns=["segment_id", "accession", "start", "end", "file"],
+        ).to_csv(index=False)
+        root = (
+            f"{fam}_domain_structures"
+            if segments_only
+            else f"{fam}_parent_structures"
+        )
+        archive.writestr(f"{root}/manifest.csv", manifest)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _domain_xlsx_b64(fam, members, edges, workbench):
+    """Build the complete D-family workbook using segment-aware evidence."""
+    buf = io.BytesIO()
+    member_table = pd.DataFrame(members).copy()
+    for column in (
+        "overlap_annotations",
+        "expression",
+        "p2rank",
+        "fpocket",
+        "esm_values",
+    ):
+        if column in member_table:
+            member_table[column] = member_table[column].map(
+                lambda value: json.dumps(value, separators=(",", ":"))
+            )
+    with pd.ExcelWriter(buf, engine="openpyxl") as xl:
+        member_table.to_excel(xl, sheet_name="members", index=False)
+        pd.DataFrame(edges).to_excel(
+            xl, sheet_name="foldseek_local_links", index=False
+        )
+        labels = workbench.get("usalign_labels", [])
+        matrix = workbench.get("usalign_matrix", [])
+        if labels and matrix:
+            pd.DataFrame(matrix, index=labels, columns=labels).to_excel(
+                xl, sheet_name="usalign_TM"
+            )
+        for sheet, records in (
+            ("sequence_MSA", workbench.get("sequence_msa", {})),
+            ("foldmason_AA", workbench.get("structural_msa", {})),
+            ("foldmason_3Di", workbench.get("three_di_msa", {})),
+        ):
+            if records:
+                pd.DataFrame(
+                    [
+                        {
+                            "segment_id": member,
+                            "aligned_sequence": sequence,
+                            "status": "complete",
+                            "reason": "",
+                        }
+                        for member, sequence in records.items()
+                    ]
+                ).to_excel(xl, sheet_name=sheet, index=False)
+            else:
+                reason = (
+                    "No reciprocal-coverage sequence subgroup qualified for MAFFT."
+                    if sheet == "sequence_MSA"
+                    else "Alignment was not produced."
+                )
+                pd.DataFrame(
+                    [
+                        {
+                            "segment_id": "",
+                            "aligned_sequence": "",
+                            "status": "not_applicable",
+                            "reason": reason,
+                        }
+                    ]
+                ).to_excel(xl, sheet_name=sheet, index=False)
+        subgroup_rows = []
+        for subgroup in workbench.get("sequence_subgroups", []):
+            for segment_id in subgroup.get("members", []):
+                subgroup_rows.append(
+                    {
+                        "subgroup": subgroup.get("id"),
+                        "segment_id": segment_id,
+                        "status": subgroup.get("status"),
+                        "newick": subgroup.get("newick", ""),
+                        "aligned_sequence": subgroup.get("msa", {}).get(
+                            segment_id, ""
+                        ),
+                    }
+                )
+        pd.DataFrame(subgroup_rows).to_excel(
+            xl, sheet_name="sequence_subgroups", index=False
+        )
+        tree_rows = []
+        for metric, newick in workbench.get("foldtree_trees", {}).items():
+            tree_status = (
+                workbench.get("foldtree_status", {})
+                .get("metrics", {})
+                .get(metric, {})
+            )
+            tree_rows.append(
+                {
+                    "tree_type": "FoldTree structural",
+                    "metric": metric,
+                    "status": tree_status.get("status"),
+                    "rooting_method": tree_status.get("rooting_method"),
+                    "newick": newick,
+                }
+            )
+        if workbench.get("foldmason_guide_newick"):
+            tree_rows.append(
+                {
+                    "tree_type": "FoldMason guide",
+                    "metric": "guide",
+                    "status": "complete",
+                    "rooting_method": "",
+                    "newick": workbench["foldmason_guide_newick"],
+                }
+            )
+        for subgroup in workbench.get("sequence_subgroups", []):
+            if subgroup.get("newick"):
+                tree_rows.append(
+                    {
+                        "tree_type": "MAFFT + FastTree sequence",
+                        "metric": subgroup.get("id"),
+                        "status": subgroup.get("status"),
+                        "rooting_method": "",
+                        "newick": subgroup["newick"],
+                    }
+                )
+        pd.DataFrame(tree_rows).to_excel(xl, sheet_name="trees", index=False)
+        fit_rows = []
+        for segment_id, stats in workbench.get("fit_stats", {}).items():
+            row = {"segment_id": segment_id, **stats}
+            for key in ("rotation", "translation"):
+                if key in row:
+                    row[key] = json.dumps(row[key], separators=(",", ":"))
+            fit_rows.append(row)
+        pd.DataFrame(fit_rows).to_excel(
+            xl, sheet_name="superposition", index=False
+        )
+        expression_rows = []
+        pocket_rows = []
+        annotation_rows = []
+        seen_expression = set()
+        for member in members:
+            accession = member["acc"]
+            if accession not in seen_expression:
+                seen_expression.add(accession)
+                expression_rows.append(
+                    {"acc": accession, **member.get("expression", {})}
+                )
+            for method in ("p2rank", "fpocket"):
+                result = member.get(method, {}) or {}
+                pocket_rows.append(
+                    {
+                        "segment_id": member["segment_id"],
+                        "acc": accession,
+                        "method": method,
+                        "profile": (
+                            member.get("p2rank_profile")
+                            if method == "p2rank"
+                            else ""
+                        ),
+                        "top_score": result.get("top_score"),
+                        "top_probability": result.get("top_probability"),
+                        "n_pockets": result.get("n_pockets"),
+                        "domain_lining_residues": " ".join(
+                            map(str, result.get("domain_lining_residues", []))
+                        ),
+                    }
+                )
+            annotation_rows.append(
+                {
+                    "segment_id": member["segment_id"],
+                    "acc": accession,
+                    "overlap_annotations": "; ".join(
+                        f"{item.get('source')}: {item.get('label')} "
+                        f"({item.get('start')}-{item.get('end')})"
+                        for item in member.get("overlap_annotations", [])
+                    ),
+                    "gene": member.get("gene", ""),
+                    "effectorp": member.get("eff", ""),
+                    "tmr": member.get("tmr"),
+                    "pfam": member.get("pfam", ""),
+                    "interpro": member.get("ipr", ""),
+                    "pdb_hit": member.get("pdb", ""),
+                    "afdb_hit": member.get("afdb", ""),
+                }
+            )
+        pd.DataFrame(expression_rows).to_excel(
+            xl, sheet_name="RNAseq_parent_proteins", index=False
+        )
+        pd.DataFrame(pocket_rows).to_excel(
+            xl, sheet_name="pockets_parent_mapped", index=False
+        )
+        pd.DataFrame(annotation_rows).to_excel(
+            xl, sheet_name="annotation", index=False
+        )
+        scores = workbench.get("structural_conservation", [])
+        if scores:
+            pd.DataFrame(
+                {
+                    "alignment_column": range(1, len(scores) + 1),
+                    "foldmason_lddt": scores,
+                }
+            ).to_excel(
+                xl, sheet_name="structural_conservation", index=False
+            )
+        pd.DataFrame(
+            [
+                ("members", "D-family segment coordinates, parent F family, and evidence."),
+                ("foldseek_local_links", "Retained local Foldseek 3Di+AA links defining the D family."),
+                ("usalign_TM", "Independent all-pairs US-align TM scores on cropped segments."),
+                ("sequence_MSA", "MAFFT MSA for the eligible sequence-homologous subgroup."),
+                ("foldmason_AA", "FoldMason structure-guided amino-acid MSA for all segments."),
+                ("foldmason_3Di", "FoldMason 3Di structural-alphabet MSA for all segments."),
+                ("trees", "FoldTree structural trees, FoldMason guide tree, and sequence trees are separate records."),
+                ("RNAseq_parent_proteins", "RNA-seq is protein-level evidence; each parent accession appears once."),
+                ("pockets_parent_mapped", "Pockets were predicted on complete parents and mapped to segment coordinates."),
+            ],
+            columns=["sheet", "contents"],
+        ).to_excel(xl, sheet_name="README", index=False)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _domain_package_b64(
+    fam,
+    members,
+    edges,
+    workbench,
+    parent_structures,
+    parent_sequences,
+    workbook_b64,
+):
+    """Build one auditable ZIP containing every D-family sequence and structure asset."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        root = f"{fam}_domain_family"
+        domain_fasta = []
+        parent_fasta = []
+        written_parents = set()
+        written_parent_structures = set()
+        for member in members:
+            accession = member["acc"]
+            sequence = parent_sequences.get(accession, "")
+            if sequence:
+                domain_fasta.append(
+                    f">{member['segment_id']}\n"
+                    f"{sequence[int(member['start']) - 1:int(member['end'])]}\n"
+                )
+                if accession not in written_parents:
+                    written_parents.add(accession)
+                    parent_fasta.append(f">{accession}\n{sequence}\n")
+            parent = parent_structures.get(accession, "")
+            if parent:
+                safe = re.sub(
+                    r"[^A-Za-z0-9_.-]+", "_", member["segment_id"]
+                )
+                cropped = "\n".join(
+                    line for line in parent.splitlines()
+                    if line.startswith(("ATOM", "HETATM"))
+                    and line[22:26].strip().lstrip("-").isdigit()
+                    and int(member["start"]) <= int(line[22:26]) <= int(member["end"])
+                )
+                archive.writestr(
+                    f"{root}/structures/domains/{safe}.pdb",
+                    cropped.rstrip() + "\nTER\nEND\n",
+                )
+                if accession not in written_parent_structures:
+                    written_parent_structures.add(accession)
+                    archive.writestr(
+                        f"{root}/structures/parents/{accession}.pdb",
+                        parent.rstrip() + "\n",
+                    )
+        archive.writestr(
+            f"{root}/sequences/domain_segments.fasta", "".join(domain_fasta)
+        )
+        archive.writestr(
+            f"{root}/sequences/parent_proteins.fasta", "".join(parent_fasta)
+        )
+        for filename, records in (
+            ("MAFFT_sequence_MSA.fasta", workbench.get("sequence_msa", {})),
+            ("FoldMason_AA_MSA.fasta", workbench.get("structural_msa", {})),
+            ("FoldMason_3Di_MSA.fasta", workbench.get("three_di_msa", {})),
+        ):
+            if records:
+                archive.writestr(
+                    f"{root}/alignments/{filename}",
+                    "".join(
+                        f">{member}\n{sequence}\n"
+                        for member, sequence in records.items()
+                    ),
+                )
+        for metric, newick in workbench.get("foldtree_trees", {}).items():
+            archive.writestr(
+                f"{root}/trees/FoldTree_{metric}.nwk",
+                newick.rstrip() + "\n",
+            )
+        for subgroup in workbench.get("sequence_subgroups", []):
+            if subgroup.get("msa"):
+                archive.writestr(
+                    f"{root}/alignments/sequence_subgroups/"
+                    f"{subgroup['id']}_MAFFT.fasta",
+                    "".join(
+                        f">{member}\n{sequence}\n"
+                        for member, sequence in subgroup["msa"].items()
+                    ),
+                )
+            if subgroup.get("newick"):
+                archive.writestr(
+                    f"{root}/trees/{subgroup['id']}_sequence_FastTree.nwk",
+                    subgroup["newick"].rstrip() + "\n",
+                )
+        if workbench.get("foldmason_guide_newick"):
+            archive.writestr(
+                f"{root}/trees/FoldMason_guide.nwk",
+                workbench["foldmason_guide_newick"].rstrip() + "\n",
+            )
+        archive.writestr(
+            f"{root}/tables/members.csv", pd.DataFrame(members).to_csv(index=False)
+        )
+        archive.writestr(
+            f"{root}/tables/foldseek_local_links.csv",
+            pd.DataFrame(edges).to_csv(index=False),
+        )
+        labels = workbench.get("usalign_labels", [])
+        matrix = workbench.get("usalign_matrix", [])
+        if labels and matrix:
+            archive.writestr(
+                f"{root}/tables/usalign_TM.csv",
+                pd.DataFrame(matrix, index=labels, columns=labels).to_csv(),
+            )
+        structural_scores = workbench.get("structural_conservation", [])
+        if structural_scores:
+            archive.writestr(
+                f"{root}/tables/foldmason_structural_conservation.csv",
+                pd.DataFrame(
+                    {
+                        "alignment_column": range(
+                            1, len(structural_scores) + 1
+                        ),
+                        "foldmason_lddt": structural_scores,
+                    }
+                ).to_csv(index=False),
+            )
+        archive.writestr(
+            f"{root}/superposition/transforms.json",
+            json.dumps(
+                {
+                    "hub": workbench.get("hub"),
+                    "transforms": workbench.get("transforms", {}),
+                    "fit_stats": workbench.get("fit_stats", {}),
+                },
+                indent=2,
+            )
+            + "\n",
+        )
+        archive.writestr(
+            f"{root}/status.json",
+            json.dumps(
+                {
+                    "analyses": workbench.get("status", {}),
+                    "foldtree": workbench.get("foldtree_status", {}),
+                },
+                indent=2,
+            )
+            + "\n",
+        )
+        archive.writestr(
+            f"{root}/{fam}_data.xlsx", base64.b64decode(workbook_b64)
+        )
+    return base64.b64encode(buf.getvalue()).decode()
+
+
 def _p2rank_prediction_csv(results_dir, fam, ref):
     """Return the P2Rank table for the current reference, never a stale hub."""
     candidates = sorted(glob.glob(
@@ -403,14 +824,47 @@ def _family_expression(expression_all, members):
     return subset if len(subset) else None
 
 
+def _esm_tolerance(esm_all, key):
+    """Return residue-indexed mean ESM LLR values for one protein/family key."""
+    if esm_all is None or "family" not in esm_all.columns:
+        return {}
+    rows = esm_all[esm_all.family.astype(str) == str(key)]
+    if not len(rows):
+        return {}
+    aa_columns = [
+        column for column in rows.columns
+        if re.fullmatch(r"[A-Z]", str(column))
+    ]
+    if not aa_columns:
+        return {}
+    position_column = next(
+        (
+            column for column in rows.columns
+            if str(column).lower() in ("", "unnamed: 0", "pos", "site")
+        ),
+        rows.columns[0],
+    )
+    positions = pd.to_numeric(
+        rows[position_column].astype(str).str.extract(r"(\d+)$")[0],
+        errors="coerce",
+    )
+    means = rows[aa_columns].apply(pd.to_numeric, errors="coerce").mean(axis=1)
+    return {
+        int(position): float(value)
+        for position, value in zip(positions, means)
+        if pd.notna(position) and pd.notna(value) and math.isfinite(float(value))
+    }
+
+
 def _enrich_pocket_entry(results_dir, fam, entry):
     """Backfill all pocket predictions from raw outputs for pre-v1.0.2 runs."""
     entry = json.loads(json.dumps(entry or {}))
     ref = entry.get("ref", "")
+    storage_key = entry.get("storage_key", fam)
 
     p2 = entry.get("p2rank", {}) or {}
     if not p2.get("pockets"):
-        prediction_csv = _p2rank_prediction_csv(results_dir, fam, ref)
+        prediction_csv = _p2rank_prediction_csv(results_dir, storage_key, ref)
         if prediction_csv:
             table = pd.read_csv(prediction_csv)
             table.columns = [str(c).strip() for c in table.columns]
@@ -439,7 +893,7 @@ def _enrich_pocket_entry(results_dir, fam, entry):
 
     fp = entry.get("fpocket", {}) or {}
     if ref and not fp.get("pockets"):
-        root = os.path.join(results_dir, "fpocket", fam, f"{ref}_out")
+        root = os.path.join(results_dir, "fpocket", storage_key, f"{ref}_out")
         info = os.path.join(root, f"{ref}_info.txt")
         if os.path.exists(info):
             text = open(info, encoding="utf-8", errors="replace").read()
@@ -470,13 +924,20 @@ def _pocket_raw_tables(results_dir, fam, entry):
     """Load detector-native pocket tables for lossless workbook export."""
     tables = {}
     ref = (entry or {}).get("ref", "")
-    prediction_csv = _p2rank_prediction_csv(results_dir, fam, ref)
+    storage_key = (entry or {}).get("storage_key", fam)
+    prediction_csv = _p2rank_prediction_csv(results_dir, storage_key, ref)
     if prediction_csv:
         p2_table = pd.read_csv(prediction_csv)
         p2_table.columns = [str(c).strip() for c in p2_table.columns]
         tables["p2rank_pockets"] = p2_table
 
-    info = os.path.join(results_dir, "fpocket", fam, f"{ref}_out", f"{ref}_info.txt") if ref else ""
+    info = os.path.join(
+        results_dir,
+        "fpocket",
+        storage_key,
+        f"{ref}_out",
+        f"{ref}_info.txt",
+    ) if ref else ""
     if info and os.path.exists(info):
         text = open(info, encoding="utf-8", errors="replace").read()
         parts = re.split(r"Pocket\s+(\d+)\s*:\s*", text)
@@ -655,8 +1116,8 @@ def _svg_heat(df, title):
     return "".join(P)
 
 
-def _newick_to_svg(nwk, hub=None):
-    """Minimal rectangular cladogram from a Newick string; gold-star the hub leaf."""
+def _newick_to_svg(nwk, hub=None, title="FoldTree"):
+    """Minimal rectangular cladogram with an explicit evidence-source title."""
     try:
         import io as _io
         from Bio import Phylo
@@ -687,7 +1148,7 @@ def _newick_to_svg(nwk, hub=None):
         return (Y(kids[0]) + Y(kids[-1]))/2
     P = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" '
          f'font-family="sans-serif" font-size="10">',
-         '<text x="6" y="14" font-size="12" font-weight="600">FoldTree</text>']
+         f'<text x="6" y="14" font-size="12" font-weight="600">{title}</text>']
     def draw(cl):
         x0 = X(cl); y0 = Y(cl)
         for k in cl.clades:
@@ -934,9 +1395,66 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         except Exception:
             domain_workbench = {"schema_version": 1, "families": {}}
     for workbench in domain_workbench.get("families", {}).values():
+        label_map = workbench.get("tree_label_map", {})
+        def display_tree(newick):
+            for safe_id, segment_id in sorted(
+                label_map.items(), key=lambda item: -len(item[0])
+            ):
+                display_id = str(segment_id).replace(":", "_")
+                newick = re.sub(
+                    rf"(?<=[(,]){re.escape(str(safe_id))}(?=[:),;])",
+                    display_id,
+                    newick,
+                )
+            return newick
+
         tree = workbench.get("sequence_newick", "")
         if tree:
-            workbench["sequence_tree_svg"] = _svg_datauri(_newick_to_svg(tree))
+            workbench["sequence_tree_svg"] = _svg_datauri(
+                _newick_to_svg(
+                    display_tree(tree),
+                    title="Sequence tree · MAFFT + FastTree",
+                )
+            )
+        for subgroup in workbench.get("sequence_subgroups", []):
+            if subgroup.get("newick"):
+                subgroup["tree_svg"] = _svg_datauri(
+                    _newick_to_svg(
+                        display_tree(subgroup["newick"]),
+                        title=(
+                            f"Sequence tree · {subgroup.get('id', '')} · "
+                            "MAFFT + FastTree"
+                        ),
+                    )
+                )
+        foldmason_tree = workbench.get("foldmason_guide_newick", "")
+        if foldmason_tree:
+            workbench["foldmason_guide_tree_svg"] = _svg_datauri(
+                _newick_to_svg(
+                    display_tree(foldmason_tree),
+                    title="FoldMason structural guide tree",
+                )
+            )
+        foldtree_svgs = {}
+        for metric, newick in workbench.get("foldtree_trees", {}).items():
+            foldtree_svgs[metric] = _svg_datauri(
+                _newick_to_svg(
+                    display_tree(newick),
+                    title=f"FoldTree structural tree · {metric}",
+                )
+            )
+        workbench["foldtree_tree_svgs"] = foldtree_svgs
+        labels = workbench.get("usalign_labels", [])
+        matrix = workbench.get("usalign_matrix", [])
+        if labels and matrix:
+            workbench["usalign_matrix_svg"] = _svg_datauri(
+                _svg_matrix(
+                    matrix,
+                    labels,
+                    "Domain-segment US-align TM-score",
+                    unit="TM",
+                )
+            )
 
     def structure_text(accession, family_dir=None):
         candidates = []
@@ -978,8 +1496,22 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 buf.append(ln.strip())
         if acc: seqs_all[acc] = "".join(buf)
 
-    NET_nodes, PAY, EXTRA, REFPDB, ANN = [], {}, {}, {}, {}
+    NET_nodes, PAY, EXTRA, REFPDB, REFAVAIL, ANN = [], {}, {}, {}, {}, {}
     esm_by_fam = {}   # fam -> {ref, tol{resi:score}} for building REFPDB["<fam>_esm"]
+
+    def store_reference(key, text):
+        if not text:
+            return
+        if mode == "backend":
+            with open(
+                os.path.join(downloads_dir, f"{key}.pdb"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write(text.rstrip() + "\n")
+            REFAVAIL[key] = True
+        else:
+            REFPDB[key] = text
     fam_accs = {}
     for _, r in master.iterrows():
         fam = r.family
@@ -987,7 +1519,6 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         mem_file = os.path.join(results_dir, "families", f"{fam}.members.txt")
         members = []
         if os.path.exists(mem_file):
-            import re
             for line in open(mem_file):
                 m = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", line)
                 if m: members.append(m.group(0))
@@ -1254,12 +1785,18 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         # conservation-colored ref PDB
         cons_pdb = os.path.join(fd, f"{fam}_conservation.pdb")
         if os.path.exists(cons_pdb):
-            REFPDB[f"{fam}_cons"] = open(cons_pdb, encoding="utf-8", errors="replace").read()
+            store_reference(
+                f"{fam}_cons",
+                open(cons_pdb, encoding="utf-8", errors="replace").read(),
+            )
         structural_pdb = os.path.join(fd, f"{fam}_structural_conservation.pdb")
         if os.path.exists(structural_pdb):
-            REFPDB[f"{fam}_struct"] = open(
-                structural_pdb, encoding="utf-8", errors="replace"
-            ).read()
+            store_reference(
+                f"{fam}_struct",
+                open(
+                    structural_pdb, encoding="utf-8", errors="replace"
+                ).read(),
+            )
         # Backend mode keeps source structures for transforms/download generation but
         # does not duplicate them into the HTML payload.
         source_struct = {}
@@ -1291,7 +1828,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         if sequence_tree:
             trees["sequence"] = sequence_tree
             assets["sequence_tree_svg"] = _svg_datauri(
-                _newick_to_svg(sequence_tree, hub=hub)
+                _newick_to_svg(
+                    sequence_tree,
+                    hub=hub,
+                    title="Sequence tree · MAFFT + FastTree",
+                )
             )
         # FoldMason-aware rigid-body alignment to the canonical hub. Compact transforms
         # are embedded once and applied by the viewer and superposed-PDB downloader.
@@ -1361,7 +1902,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                         out_l.append(f"{line[:60]}{tol.get(ri, 0.0):6.2f}{line[66:]}")
                     else:
                         out_l.append(line)
-                REFPDB[f"{fam}_esm"] = "\n".join(out_l)
+                store_reference(f"{fam}_esm", "\n".join(out_l))
         # per-member mature sequences (from seqs.fasta), fall back to CA-extraction from
         # the embedded structure so a member always has a downloadable sequence.
         seq = {}
@@ -1664,12 +2205,29 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                                 expression_values[str(column)] = number
             start, end = int(segment.start), int(segment.end)
             overlaps = _overlapping_annotations(annotation_row, start, end)
-            extra = EXTRA.get(workspace, {})
-            pocket_residues = (
-                extra.get("pocket_resi", [])
-                if str(extra.get("ref_used", "")) == acc
-                else []
+            pocket_source = pockets.get(acc, {})
+            legacy_pocket = pockets.get(workspace, {})
+            if not pocket_source and str(legacy_pocket.get("ref", "")) == acc:
+                pocket_source = legacy_pocket
+            protein_pocket = _enrich_pocket_entry(
+                results_dir,
+                acc,
+                pocket_source,
             )
+            p2rank = protein_pocket.get("p2rank", {}) or {}
+            fpocket = protein_pocket.get("fpocket", {}) or {}
+            for result in (p2rank, fpocket):
+                result["domain_lining_residues"] = [
+                    int(residue)
+                    for residue in result.get("lining_residues", [])
+                    if start <= int(residue) <= end
+                ]
+            esm_values = {
+                residue: value
+                for residue, value in _esm_tolerance(esm_all, acc).items()
+                if start <= int(residue) <= end
+            }
+            parent_sequence = seqs_all.get(acc, "")
             enriched_domain_members.append({
                 "domain_family": str(segment.domain_family),
                 "segment_id": str(segment.segment_id),
@@ -1677,6 +2235,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "start": start,
                 "end": end,
                 "length": int(segment.length),
+                "parent_length": len(parent_sequence) or None,
                 "parent_family": parent,
                 "workspace": workspace,
                 "gene": member_evidence.get("gene", ""),
@@ -1691,10 +2250,15 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "afdb_hit": member_evidence.get("afdb_hit", ""),
                 "afdb_tm": member_evidence.get("afdb_tm"),
                 "overlap_annotations": overlaps,
-                "pocket_residues": [
-                    int(residue) for residue in pocket_residues
-                    if start <= int(residue) <= end
-                ],
+                "pocket_residues": sorted(set(
+                    p2rank.get("domain_lining_residues", [])
+                    + fpocket.get("domain_lining_residues", [])
+                )),
+                "p2rank": p2rank,
+                "fpocket": fpocket,
+                "p2rank_profile": protein_pocket.get("p2rank_profile", ""),
+                "pocket_status": protein_pocket.get("pocket_status", "not_run"),
+                "esm_values": esm_values,
                 "expression": expression_values,
                 "structure_available": bool(
                     (PAY.get(workspace, {}).get("struct", {}) or {}).get(acc)
@@ -1705,6 +2269,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             })
 
     annotations_by_domain = {}
+    parent_counts_by_domain = {}
+    domain_links_by_workspace = {}
     for member in enriched_domain_members:
         labels = [
             annotation["label"]
@@ -1712,6 +2278,27 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             if annotation["label"]
         ]
         annotations_by_domain.setdefault(member["domain_family"], []).extend(labels)
+        parent_label = (
+            member["acc"]
+            if member["parent_family"] == "singleton"
+            else member["parent_family"]
+        )
+        parent_counts_by_domain.setdefault(
+            member["domain_family"], Counter()
+        )[parent_label] += 1
+        domain_links_by_workspace.setdefault(member["workspace"], []).append({
+            "domain_family": member["domain_family"],
+            "segment_id": member["segment_id"],
+            "acc": member["acc"],
+            "start": member["start"],
+            "end": member["end"],
+        })
+    for workspace, links in domain_links_by_workspace.items():
+        if workspace in EXTRA:
+            EXTRA[workspace]["domain_links"] = links
+            EXTRA[workspace]["domain_families"] = sorted({
+                link["domain_family"] for link in links
+            })
 
     domain_family_records = []
     if domain_families_all is not None:
@@ -1745,6 +2332,12 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                     for member in enriched_domain_members
                     if member["domain_family"] == family_id
                 ),
+                "parent_family_counts": [
+                    {"family": parent, "n_segments": int(count)}
+                    for parent, count in parent_counts_by_domain.get(
+                        family_id, Counter()
+                    ).most_common()
+                ],
             })
 
     domain_edge_records = []
@@ -1766,6 +2359,122 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "shorter_coverage": _finite_float(edge.shorter_coverage),
             })
 
+    domain_records_by_id = {
+        record["domain_family"]: record for record in domain_family_records
+    }
+    for family_id, workbench in domain_workbench.get("families", {}).items():
+        family_members = [
+            member for member in enriched_domain_members
+            if member["domain_family"] == family_id
+        ]
+        family_edges = [
+            edge for edge in domain_edge_records
+            if edge["domain_family"] == family_id
+        ]
+        parent_structures = {
+            member["acc"]: structure_text(member["acc"])
+            for member in family_members
+        }
+        parent_structures = {
+            accession: text
+            for accession, text in parent_structures.items()
+            if text
+        }
+        parent_sequences = {
+            member["acc"]: seqs_all.get(member["acc"], "")
+            for member in family_members
+            if seqs_all.get(member["acc"], "")
+        }
+        expression_rows = []
+        seen_expression = set()
+        for member in family_members:
+            if member["acc"] in seen_expression or not member["expression"]:
+                continue
+            seen_expression.add(member["acc"])
+            expression_rows.append(
+                {"acc": member["acc"], **member["expression"]}
+            )
+        expression_table = (
+            pd.DataFrame(expression_rows).set_index("acc")
+            if expression_rows else None
+        )
+        workbench["rna_svg"] = (
+            _svg_datauri(
+                _svg_heat(
+                    expression_table,
+                    f"{family_id} parent-protein RNA-seq",
+                )
+            )
+            if expression_table is not None else ""
+        )
+        workbook_b64 = _domain_xlsx_b64(
+            family_id, family_members, family_edges, workbench
+        )
+        domain_structures_b64 = _domain_structures_zip_b64(
+            family_id,
+            family_members,
+            parent_structures,
+            segments_only=True,
+        )
+        parent_structures_b64 = _domain_structures_zip_b64(
+            family_id,
+            family_members,
+            parent_structures,
+            segments_only=False,
+        )
+        package_b64 = _domain_package_b64(
+            family_id,
+            family_members,
+            family_edges,
+            workbench,
+            parent_structures,
+            parent_sequences,
+            workbook_b64,
+        )
+        workbench["assets"] = {
+            "xlsx_b64": store_download(
+                f"{family_id}_data.xlsx", workbook_b64
+            ),
+            "domain_structures_zip_b64": store_download(
+                f"{family_id}_member_structures.zip",
+                domain_structures_b64,
+            ),
+            "parent_structures_zip_b64": store_download(
+                f"{family_id}_parent_structures.zip",
+                parent_structures_b64,
+            ),
+            "package_zip_b64": store_download(
+                f"{family_id}_domain_package.zip", package_b64
+            ),
+        }
+        # Detector-native pocket records stay in the workbook/package. The browser
+        # needs only the mapped top-pocket summary, so do not duplicate every raw
+        # pocket and residue list in the HTML payload.
+        for member in family_members:
+            for method in ("p2rank", "fpocket"):
+                result = member.get(method, {}) or {}
+                member[method] = {
+                    key: result.get(key)
+                    for key in (
+                        "top_score",
+                        "top_probability",
+                        "n_pockets",
+                        "domain_lining_residues",
+                    )
+                    if result.get(key) is not None
+                }
+        record = domain_records_by_id.get(family_id)
+        if record is not None:
+            record["has_foldmason"] = bool(workbench.get("structural_msa"))
+            record["has_foldtree"] = bool(workbench.get("foldtree_trees"))
+            record["has_sequence_tree"] = bool(
+                any(
+                    subgroup.get("newick")
+                    for subgroup in workbench.get("sequence_subgroups", [])
+                )
+            )
+            record["has_usalign"] = bool(workbench.get("usalign_matrix"))
+
     domain_network_edges = []
     if domain_bridges_all is not None:
         for _, edge in domain_bridges_all.iterrows():
@@ -1780,9 +2489,61 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 "alnlen": _finite_float(edge.mean_aligned_residues),
             })
 
+    assigned_domain_accessions = {
+        member["acc"] for member in enriched_domain_members
+    }
+    domain_unassigned_records = []
+    if members_all is not None:
+        for _, row in members_all.drop_duplicates("acc").iterrows():
+            accession = str(row.acc)
+            if accession in assigned_domain_accessions:
+                continue
+            annotation_row = annotation_by_acc.get(accession)
+            annotation_payload = (
+                _annotation_payload(pd.DataFrame([annotation_row]))
+                if annotation_row is not None else None
+            )
+            expression_values = {}
+            if expression_all is not None and "acc" in expression_all.columns:
+                match = expression_all[
+                    expression_all.acc.astype(str) == accession
+                ]
+                if len(match):
+                    expression_values = {
+                        str(column): number
+                        for column, value in match.iloc[0].items()
+                        if column != "acc"
+                        and (number := _finite_float(value)) is not None
+                    }
+            pocket_entry = _enrich_pocket_entry(
+                results_dir, accession, pockets.get(accession, {})
+            )
+            p2rank = pocket_entry.get("p2rank", {}) or {}
+            fpocket = pocket_entry.get("fpocket", {}) or {}
+            domain_unassigned_records.append({
+                "acc": accession,
+                "parent_family": str(row.family),
+                "label": (
+                    annotation_payload.get("label", "annotation unavailable")
+                    if annotation_payload else "annotation unavailable"
+                ),
+                "plddt": _finite_float(row.get("plddt")),
+                "length": int(row.length) if pd.notna(row.get("length")) else None,
+                "p2rank_score": _finite_float(p2rank.get("top_score")),
+                "p2rank_probability": _finite_float(
+                    p2rank.get("top_probability")
+                ),
+                "fpocket_score": _finite_float(fpocket.get("top_score")),
+                "expression": expression_values,
+            })
+
     D = dict(
+        ANALYSIS_SCOPE=str(
+            config.get("output", {}).get("analysis_scope", "both")
+        ),
         NET=dict(nodes=NET_nodes, edges=NET_edges),
         SINGLETONS=SINGLETONS,
+        DOMAIN_UNASSIGNED=domain_unassigned_records,
         DOMAIN_FAMILIES=domain_family_records,
         DOMAIN_MEMBERS=enriched_domain_members,
         DOMAIN_EDGES=domain_edge_records,
@@ -1790,6 +2551,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         DNET=dict(nodes=domain_family_records, edges=domain_network_edges),
         EXTRA=EXTRA,
         REFPDB=REFPDB,
+        REFAVAIL=REFAVAIL,
         PAY=PAY,
         SUMMARY=SUMMARY,
         BACKEND={"enabled": mode == "backend"},

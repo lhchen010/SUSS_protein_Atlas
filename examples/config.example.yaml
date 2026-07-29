@@ -58,6 +58,7 @@ signals:
   foldtree_metrics: [foldtree, alntmscore, lddt]
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
+  esm_scope: representatives
   pockets: [fpocket, p2rank]
   min_rate4site_sequences: 4
 
@@ -73,13 +74,15 @@ steps:
   conservation: true    # Rate4Site (conda)
   pocket: true          # fpocket (conda)
   esm: false            # OFF (needs ESM-Scan + GPU/torch)
-  foldtree: true        # FoldTree (git clone; set tools.fold_tree)
+  foldtree: true        # FoldTree for full-length F families
+  domain_foldtree: false # optional FoldTree for every D family; slower
   annotate: false       # OFF (needs Foldseek DBs + InterProScan)
   rnaseq: false         # OFF (no RNAseq in the mini example)
   cards: true
   atlas: true
 
 output:
+  analysis_scope: both
   html_mode: single
   atlas_name: "example_suss_atlas"
   allow_fallback_html: false

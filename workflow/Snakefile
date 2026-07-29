@@ -134,13 +134,34 @@ rule domain_workbench:
         edges=f"{RESULTS}/domain_edges.csv",
         qc=f"{RESULTS}/qc.csv",
         seqs=f"{RESULTS}/seqs.fasta",
+        blastp=f"{RESULTS}/blastp_allvsall.tsv",
         pdb_dir=PDB_DIR
     output:
-        json=f"{RESULTS}/domain_workbench.json"
+        json=f"{RESULTS}/domain_workbench.json",
+        assets=directory(f"{RESULTS}/domain_families")
     params:
         mafft=TOOLS.get("mafft", "mafft"),
         fasttree=TOOLS.get("fasttree", "FastTree"),
-        usalign=TOOLS.get("usalign", "USalign")
+        usalign=TOOLS.get("usalign", "USalign"),
+        foldmason=TOOLS.get("foldmason", "foldmason"),
+        enabled=on("domain_cluster", True),
+        pair_threshold=config.get("structural_conservation", {}).get(
+            "pair_threshold", 0.5
+        ),
+        blast_evalue=config["classification"]["blast_evalue"],
+        blast_coverage=config["classification"].get(
+            "min_reciprocal_coverage", 0.5
+        ),
+        foldtree_enabled=on("domain_foldtree", False),
+        foldtree_dir=TOOLS.get("fold_tree", ""),
+        foldtree_snakemake=TOOLS.get("foldtree_snakemake", "snakemake"),
+        foldtree_foldseek=TOOLS.get("foldtree_foldseek", TOOLS["foldseek"]),
+        foldtree_extra_path=TOOLS.get("foldtree_extra_path", ""),
+        foldtree_metrics=config["signals"]["foldtree_metrics"],
+        foldtree_rooting=config["signals"].get(
+            "foldtree_rooting",
+            {"primary": "mad", "fallback": "midpoint", "small_family_max": 3}
+        )
     threads: 8
     script: "scripts/domain_workbench.py"
 
@@ -193,6 +214,7 @@ rule sequence_subgroups:
 rule sasa_pocket:
     input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv", members=f"{RESULTS}/members.csv"
     output: sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json"
+    threads: 4
     params: enabled=on("pocket"), p2rank=TOOLS.get("p2rank", ""),
             p2rank_profile=config.get("pocket", {}).get("p2rank_profile", "alphafold"),
             fpocket=TOOLS.get("fpocket", "fpocket"), java_env=TOOLS.get("p2rank_java_env", ""),
@@ -214,6 +236,7 @@ rule esm:
     output: f"{RESULTS}/esm_all.csv"
     params: enabled=on("esm"), script=TOOLS.get("esm_scan", ""), model=config["signals"]["esm_model"],
             strategy=config["signals"]["plm_strategy"],
+            scope=config["signals"].get("esm_scope", "representatives"),
             python=TOOLS.get("esm_python", "python")
     script: "scripts/esm_scan.py"
 
@@ -453,6 +476,7 @@ rule assemble:
             domain_edges=f"{RESULTS}/domain_edges.csv",
             domain_bridges=f"{RESULTS}/domain_cross_edges.csv",
             domain_workbench=f"{RESULTS}/domain_workbench.json",
+            domain_assets=f"{RESULTS}/domain_families",
             subgroups=f"{RESULTS}/sequence_subgroups.csv",
             structure_db=f"{RESULTS}/structure_db/atlas.complete.json",
             structure_index=f"{RESULTS}/structure_search_index.csv"

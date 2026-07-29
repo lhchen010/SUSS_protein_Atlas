@@ -10,14 +10,14 @@ structurally similar protein families in secreted effector repertoires.**
 SUSS Protein Atlas starts from predicted protein structures for one strain, builds
 structure-defined families, labels their sequence-divergence spectrum, and integrates independent
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
-optional expression into an interactive atlas. Version 4 separates three questions that should
+optional expression into an interactive atlas. Version 5 separates three questions that should
 not be collapsed into one clustering label: full-length fold families (`F`), local structural
-domain families (`D`), and sequence-homologous subgroups (`S`). Version 4.1 makes P2Rank
-reference-safe, defaults predicted structures to P2Rank's AlphaFold profile, restores
-full-family RNA-seq plots, and adds selectable D-family superpositions. Unclustered proteins remain
-independent singleton records with complete single-protein evidence. Domain families now have
-the same evidence-oriented workbench pattern as full-length families, and portal atlases load
-large structures and downloads on demand.
+domain families (`D`), and sequence-homologous subgroups (`S`). D families now use the same
+evidence-oriented workbench as F families: complete-parent superposition driven by matched domain
+coordinates, FoldMason AA/3Di MSA, independent US-align matrices, structural and sequence trees,
+conservation, per-protein pockets, representative ESM scans, RNA-seq, annotation, and complete downloads. Every F/D
+relationship is bidirectionally linked. Unclustered proteins remain independent records, and
+portal atlases load large structures and downloads on demand.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -31,13 +31,13 @@ large structures and downloads on demand.
 | What defines a D family? | Significant local Foldseek 3Di+AA segment matches; D families are independent of F families |
 | What defines an S subgroup? | Reciprocal-coverage-controlled BLAST links within an F family |
 | What defines a SUSS relationship? | Structural similarity with no BLAST-detected relationship at the configured threshold |
-| How is structure independently checked? | Within-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
+| How is structure independently checked? | Within-F-family and cropped-D-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | Which alignments are used? | FoldMason AA/3Di structural MSA for fold correspondence; MAFFT sequence MSA for eligible S subgroups |
 | When is Rate4Site used? | Only when the representative protein belongs to a sufficiently large sequence-homologous subgroup |
 | How is structural conservation scored? | Official FoldMason per-column LDDT; columns lacking the configured pair support remain unscored |
 | What biological evidence is integrated? | Structural conservation, Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, sequence tree, annotation, and optional RNA-seq |
 | How are singletons handled? | As independent proteins with sequence viewer/download, structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
-| What is delivered? | Interactive F/D/singleton workspaces, a searchable Foldseek database, lazy server artifacts or self-contained HTML, Excel summaries, machine-readable tables, and provenance |
+| What is delivered? | Linked F/D/unassigned/singleton workspaces, a searchable Foldseek database, domain and parent ZIPs, Excel workbooks, machine-readable tables, and provenance |
 | How is it orchestrated? | Snakemake checkpoint expansion after the family count becomes known |
 
 ## Workflow
@@ -54,7 +54,8 @@ flowchart LR
     QC --> LOCAL["Local Foldseek<br/>3Di+AA segment search"]
     LOCAL --> DGRAPH["Segment graph"]
     DGRAPH --> D["D families<br/>shared structural domains"]
-    D --> DWB["Domain workbench<br/>US-align superposition<br/>MAFFT + sequence tree"]
+    D --> DWB["Domain workbench<br/>full parents aligned by matched domains<br/>US-align + FoldMason AA/3Di"]
+    DWB --> DTREE["FoldTree (optional)<br/>FoldMason guide tree<br/>MAFFT + FastTree subgroups"]
 
     F --> FM["FoldMason AA + 3Di MSA"]
     FM --> SCONS["Structural conservation"]
@@ -66,9 +67,10 @@ flowchart LR
     MAFFT --> STREE["FastTree<br/>sequence relationship tree"]
     F --> USA["US-align validation"]
 
-    QC --> SHARED["Annotation, pockets, ESM,<br/>DeepTMHMM, RNA-seq"]
+    QC --> SHARED["Per-protein annotation and pockets,<br/>representative ESM, DeepTMHMM, RNA-seq"]
     F --> ATLAS["Interactive atlas + Excel"]
     DWB --> ATLAS
+    DTREE --> ATLAS
     SINGLE --> ATLAS
     SCONS --> ATLAS
     FT --> ATLAS
@@ -113,7 +115,8 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/domain_families.csv` / `domain_members.csv` | Local structural-domain family summaries and protein segment coordinates |
 | `results/domain_edges.csv` / `domain_cross_edges.csv` | Segment-level local Foldseek evidence and aggregated structural bridges between D families |
-| `results/domain_workbench.json` | Per-D-family hub, segment sequences, MAFFT alignment, sequence tree, US-align transforms, and fit statistics |
+| `results/domain_workbench.json` | Per-D-family FoldMason/MAFFT alignments, independent trees, US-align matrices/transforms, conservation, statuses, and download metadata |
+| `results/domain_families/<D family>/` | Cropped structures, parent/segment FASTA, FoldMason assets, US-align matrices, optional FoldTree output, and auditable status files |
 | `results/sequence_subgroups.csv` | Sequence-homologous subgroups nested within full-length structural families |
 | `results/structure_db/atlas*` | Foldseek database used by the portal structure-search endpoint |
 | `results/structure_search_index.csv` | Protein-to-F/D/S/singleton lookup table for structure-search results |
@@ -126,18 +129,19 @@ for workflow development:
 
 ## Interactive atlas search
 
-The atlas has three primary views:
+The combined atlas has four relationship views:
 
 - **Full-length families** searches and highlights global fold-defined `F` families.
 - **Domain families** provides a D-family overview network. Edges summarize retained local
   Foldseek hits that bridge two D communities. Opening a D family reveals its segment-level
-  similarity network, selectable US-align hub superposition, local Foldseek
-  lDDT/probability/alignment evidence, MAFFT segment MSA and sequence tree, and a linear
-  parent-protein map that marks the matched coordinates. Superposition defaults to the focused
-  segment plus the D-family hub and can retain the focused full-length parent as context. The
-  workbench also includes the matched region in full-structure context,
-  coordinate-overlapping Pfam/InterPro calls, and protein-level annotation, pocket, EffectorP,
-  DeepTMHMM, Foldseek database-hit, and RNA-seq evidence.
+  network and a single member checklist. One checked member shows its complete parent protein
+  with the matched domain highlighted; multiple checked members can be superposed using the
+  domain coordinates while retaining every complete parent. FoldTree structural trees,
+  FoldMason guide trees, and MAFFT/FastTree sequence trees are displayed as separate evidence
+  types. FoldMason AA/3Di, US-align, conservation, mapped pockets/ESM, RNA-seq, annotation,
+  domain/full structures, FASTA, Excel, and complete-package ZIP downloads are included.
+- **No D-family match** lists proteins without a retained local domain-family link under the
+  current thresholds. This is not interpreted as evidence that a protein contains no domains.
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
   pockets, and transmembrane helices. Selecting a row opens structure, pocket, ESM, RNA-seq, and
   direct annotation evidence for that protein.
@@ -149,7 +153,12 @@ colored only when at least half of structure-pair subalignments support it; unsu
 are grey rather than being interpreted as variable or conserved. Red is high structural
 conservation and blue is low structural conservation. Evolutionary conservation is reported
 separately and remains unavailable when Rate4Site lacks a sufficiently large homologous subgroup.
-A singleton exposes its one mature sequence; pairwise family analyses are omitted.
+A singleton exposes its one mature sequence; pairwise family analyses are omitted. A full-length
+singleton can still belong to a D family when one local region matches domains in other proteins.
+
+The portal offers `Full-length`, `Domain-aware`, and `Combined` analysis scopes. All scopes produce
+one HTML. Combined is recommended because one D family may bridge several F families and one F
+family may contain several D families.
 
 The portal also accepts a PDB or mmCIF query after a run completes. It searches that run's
 Foldseek database and maps each hit directly to its F family or singleton, D-family memberships,

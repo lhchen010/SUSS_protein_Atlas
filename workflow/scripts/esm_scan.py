@@ -1,9 +1,11 @@
-"""ESM-1b per-residue variant effects for family references and singletons.
+"""ESM-1b per-residue variant effects for configured protein targets.
 
-Singleton records use their accession in the ``family`` column so the atlas can
-attach the result without pretending that all singletons form one family.
+The default ``representatives`` scope scans F-family references plus protein
+singletons, matching the evidence level shown in the full-family workbench.
+``all_proteins`` is available for users who explicitly accept its much higher
+masked-marginals cost.
 """
-import os, glob, re, subprocess
+import os, glob, re, shutil, subprocess
 import pandas as pd
 from runtime_utils import resolve_executable, resolve_file
 
@@ -13,6 +15,7 @@ out_csv = snakemake.output[0]
 esmpy   = snakemake.params.script
 model   = snakemake.params.model
 strategy= snakemake.params.strategy
+scope = str(snakemake.params.scope or "representatives").strip().lower()
 resdir  = os.path.join(os.path.dirname(out_csv), "families")
 if not snakemake.params.enabled:
     raise RuntimeError("ESM rule was scheduled while steps.esm is disabled")
@@ -30,39 +33,70 @@ accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 def acc_of(s):
     m = accre.search(s); return m.group(0) if m else s
 
-# reference per family
-refs = {}
+# Full-family aliases preserve the existing family-reference contract.
+family_refs = {}
 for ff in sorted(glob.glob(os.path.join(resdir, "*.members.txt"))):
     fam = os.path.basename(ff).split(".")[0]
     m = accre.search(open(ff).readline())
-    if m: refs[fam] = m.group(0)
+    if m: family_refs[fam] = m.group(0)
 members = pd.read_csv(members_csv)
-for acc in sorted(members.loc[members.family == "singleton", "acc"].astype(str)):
-    refs[acc] = acc
+singletons = set(
+    members.loc[members.family == "singleton", "acc"].astype(str)
+)
+if scope == "all_proteins":
+    targets = sorted(set(members.acc.astype(str)))
+elif scope == "representatives":
+    targets = sorted(set(family_refs.values()) | singletons)
+else:
+    raise ValueError(
+        f"signals.esm_scope must be representatives or all_proteins, got {scope}"
+    )
 
 seq_by_acc = {acc_of(k): v for k, v in seqs.items()}
 outdir = os.path.join(os.path.dirname(out_csv), "esm_out"); os.makedirs(outdir, exist_ok=True)
-frames = []
-for fam, ref in sorted(refs.items()):
-    seq = seq_by_acc.get(ref)
+frames_by_acc = {}
+for accession in targets:
+    seq = seq_by_acc.get(accession)
     if not seq: continue
-    pref = os.path.join(outdir, f"{fam}_{ref}")
+    pref = os.path.join(outdir, f"{accession}_{accession}")
     mat = pref + "-res-in-matrix.csv"
+    if not os.path.exists(mat):
+        legacy = sorted(
+            path for path in glob.glob(
+                os.path.join(outdir, f"*_{accession}-res-in-matrix.csv")
+            )
+            if os.path.abspath(path) != os.path.abspath(mat)
+        )
+        if len(legacy) == 1:
+            shutil.copy2(legacy[0], mat)
     if not os.path.exists(mat):
         subprocess.run([python, esmpy,
                         "--model-location", model, "--sequence", seq,
                         "--scoring-strategy", strategy, "--output-prefix", pref],
                        capture_output=True, text=True, timeout=1800, check=True)
         if not os.path.exists(mat):
-            raise RuntimeError(f"ESM-Scan completed without expected output for {fam}")
+            raise RuntimeError(
+                f"ESM-Scan completed without expected output for {accession}"
+            )
     if os.path.exists(mat):
         df = pd.read_csv(mat).rename(columns={df_c: df_c for df_c in []})
-        df.insert(0, "family", fam); df.insert(1, "ref", ref)
-        frames.append(df)
+        df.insert(0, "family", accession)
+        df.insert(1, "ref", accession)
+        frames_by_acc[accession] = df
+frames = list(frames_by_acc.values())
+for family, reference in sorted(family_refs.items()):
+    if reference in frames_by_acc:
+        alias = frames_by_acc[reference].copy()
+        alias["family"] = family
+        frames.append(alias)
 os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 if frames:
     pd.concat(frames, ignore_index=True).to_csv(out_csv, index=False)
 else:
     open(out_csv, "w").write("family,ref\n")
-n_singletons = int((members.family == "singleton").sum())
-print(f"ESM: {len(frames)} references ({n_singletons} singleton targets) -> {out_csv}")
+n_singletons = len(singletons)
+print(
+    f"ESM: {len(frames_by_acc)}/{len(targets)} proteins "
+    f"({len(family_refs)} full-family aliases, {n_singletons} singletons, "
+    f"scope={scope}) -> {out_csv}"
+)

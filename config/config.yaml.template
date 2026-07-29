@@ -68,6 +68,7 @@ signals:                          # locked; not recommended to change
     small_family_max: 3
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
+  esm_scope: representatives      # representatives | all_proteins (very expensive)
   pockets: [fpocket, p2rank]
   min_rate4site_sequences: 4
 
@@ -83,12 +84,14 @@ steps:
   pocket: true                    # fpocket + P2Rank pocket detection
   esm: true                       # ESM-1b mutational tolerance (GPU, slower)
   foldtree: true                  # structural phylogeny (x3 metrics per family)
+  domain_foldtree: false          # optional FoldTree on all D families; expensive at atlas scale
   annotate: true                  # 4-tool annotation (InterProScan is Linux-only; see README)
   rnaseq: auto                    # auto = run if rnaseq_xlsx set, else skip; true/false to force
   cards: true                     # six-panel cards
   atlas: true                     # interactive HTML
 
 output:
+  analysis_scope: both            # full | domain | both; one HTML shows the selected workbenches
   html_mode: single               # single (self-contained + foldcomp) | backend (lazy-load)
   atlas_name: "cor_suss_atlas"
   allow_fallback_html: false      # true only for debugging; production renderer errors fail the run
