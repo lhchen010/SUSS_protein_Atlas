@@ -577,6 +577,15 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "Detector-native pocket records stay in the workbook/package" in builder
     assert "function buildDomainTreesPane" in renderer
     assert "function buildDomainConservationPane" in renderer
+    assert "function setDomainBackground" in renderer
+    assert "function setDomainRep" in renderer
+    assert "function setDomainPocket" in renderer
+    assert "Domain sequence identity heatmap" in renderer
+    assert "Sequence conservation" in renderer
+    assert "Rate4Site sequence conservation" in renderer
+    assert "function setViewerBackground" in renderer
+    assert "Foldseek TM matrix was not available" in renderer
+    assert "Independent US-align matrix was not available" in renderer
     assert "FoldTree structural relationship" in renderer
     assert "MAFFT amino-acid MSA" in renderer
     assert "FoldMason structural MSA" in renderer
@@ -667,6 +676,11 @@ def test_domain_downloads_include_segments_parents_and_manifest():
                 "foldtree_trees": {},
                 "foldtree_status": {},
                 "structural_conservation": [0.8, None],
+                "sequence_identity_labels": ["A:1-2"],
+                "sequence_identity_matrix": [[1.0]],
+                "sequence_conservation": {
+                    "A:1-2": {"1": 0.8, "2": -0.2}
+                },
                 "usalign_labels": ["A:1-2"],
                 "usalign_matrix": [[1.0]],
                 "status": {"foldmason": "complete"},
@@ -686,6 +700,11 @@ def test_domain_downloads_include_segments_parents_and_manifest():
         assert "D0_domain_family/superposition/transforms.json" in names
         assert (
             "D0_domain_family/tables/foldmason_structural_conservation.csv"
+            in names
+        )
+        assert "D0_domain_family/tables/domain_sequence_identity.csv" in names
+        assert (
+            "D0_domain_family/tables/rate4site_sequence_conservation.csv"
             in names
         )
 
@@ -716,14 +735,31 @@ def test_domain_workbook_keeps_explicit_sequence_msa_status_when_not_applicable(
             "usalign_matrix": [[1.0]],
             "fit_stats": {},
             "structural_conservation": [0.8, None],
+            "sequence_identity_labels": ["A:1-2"],
+            "sequence_identity_matrix": [[1.0]],
+            "sequence_conservation": {"A:1-2": {"1": 0.8}},
         },
     )
 
     workbook = pd.ExcelFile(io.BytesIO(base64.b64decode(encoded)))
     assert "sequence_MSA" in workbook.sheet_names
+    assert "sequence_identity" in workbook.sheet_names
+    assert "sequence_conservation" in workbook.sheet_names
     sequence_msa = workbook.parse("sequence_MSA")
     assert sequence_msa.loc[0, "status"] == "not_applicable"
     assert "No reciprocal-coverage" in sequence_msa.loc[0, "reason"]
+
+
+def test_checkpoint_member_lists_do_not_own_family_analysis_directory():
+    snakefile = (ROOT / "workflow" / "Snakefile").read_text()
+    builder = (
+        ROOT / "workflow" / "builders" / "html_builder.py"
+    ).read_text()
+
+    assert 'MEMBER_DIR = f"{RESULTS}/family_members"' in snakefile
+    assert "famdir=directory(MEMBER_DIR)" in snakefile
+    assert 'famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"' in snakefile
+    assert '"family_members", f"{fam}.members.txt"' in builder
 
 
 def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():

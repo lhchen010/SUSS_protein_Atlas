@@ -14,6 +14,7 @@ STRAIN   = config["strain"]["code"]
 PDB_DIR  = config["input"]["pdb_dir"]
 RESULTS  = "results"
 FAM_DIR  = f"{RESULTS}/families"
+MEMBER_DIR = f"{RESULTS}/family_members"
 TOOLS    = config["tools"]
 STEPS    = config.get("steps", {})
 def on(step, default=True):
@@ -152,6 +153,11 @@ rule domain_workbench:
         blast_coverage=config["classification"].get(
             "min_reciprocal_coverage", 0.5
         ),
+        rate4site=TOOLS.get("rate4site", "rate4site"),
+        conservation_enabled=on("conservation"),
+        min_rate4site_sequences=config["signals"].get(
+            "min_rate4site_sequences", 4
+        ),
         foldtree_enabled=on("domain_foldtree", False),
         foldtree_dir=TOOLS.get("fold_tree", ""),
         foldtree_snakemake=TOOLS.get("foldtree_snakemake", "snakemake"),
@@ -171,7 +177,7 @@ checkpoint cluster:
     output: families=f"{RESULTS}/families.csv",
             members=f"{RESULTS}/members.csv",
             edges=f"{RESULTS}/edges.csv",
-            famdir=directory(FAM_DIR)          # one member-list file per family
+            famdir=directory(MEMBER_DIR)       # member lists only; never owns analysis outputs
     params: tm=config["clustering"]["foldseek_tm"],
             coverage=config["clustering"].get("whole_fold_min_coverage", 0.5),
             sym=config["clustering"]["tm_symmetric"],
@@ -258,7 +264,7 @@ rule msa:
     # FoldMason easy-msa PREFIX writes PREFIX_aa.fa (AA MSA), PREFIX_3di.fa (3Di MSA),
     # PREFIX.nw (guide tree), PREFIX.html. Rename the AA MSA -> {fam}.aln (rate4site input)
     # and the 3Di MSA -> {fam}.fasta so declared outputs match what the tool produces.
-    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
     output: aln=f"{FAM_DIR}/{{fam}}/{{fam}}.aln", fasta=f"{FAM_DIR}/{{fam}}/{{fam}}.fasta"
     params: bin=TOOLS["foldmason"], pref=lambda w: f"{FAM_DIR}/{w.fam}/{w.fam}_fm"
     shell:
@@ -286,7 +292,7 @@ rule sequence_analysis:
     input:
         seqs=f"{RESULTS}/seqs.fasta",
         subgroups=f"{RESULTS}/sequence_subgroups.csv",
-        famfile=f"{FAM_DIR}/{{fam}}.members.txt"
+        famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"
     output:
         msa=f"{FAM_DIR}/{{fam}}/{{fam}}_sequence_msa.fasta",
         tree=f"{FAM_DIR}/{{fam}}/{{fam}}_sequence_tree.nwk",
@@ -304,7 +310,7 @@ rule sequence_analysis:
     script: "scripts/sequence_analysis.py"
 
 rule foldtree:
-    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
     output:
         trees=[f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]],
         status=f"{FAM_DIR}/{{fam}}/{{fam}}_foldtree_status.json"
@@ -335,7 +341,7 @@ rule signature:
 rule matrices:
     input:  foldseek=f"{RESULTS}/foldseek_allvsall.tsv",
             blastp=f"{RESULTS}/blastp_allvsall.tsv",
-            famfile=f"{FAM_DIR}/{{fam}}.members.txt"
+            famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM.csv", idm=f"{FAM_DIR}/{{fam}}/{{fam}}_ID.csv"
     params: sym=config["clustering"]["tm_symmetric"]
     script: "scripts/matrices.py"
@@ -345,7 +351,7 @@ rule matrices:
 # family only (O(m^2), m small) so cost stays trivial even at thousands of proteins. Not used
 # for clustering — cards/family_summary show both and flag disagreeing pairs.
 rule tm_refine:
-    input:  famfile=f"{FAM_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM_usalign.csv"
     params: usalign=TOOLS.get("usalign", ""), code=STRAIN,
             sym=config["clustering"]["tm_symmetric"]

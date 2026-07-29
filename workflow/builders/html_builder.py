@@ -453,6 +453,18 @@ def _domain_xlsx_b64(fam, members, edges, workbench):
             pd.DataFrame(matrix, index=labels, columns=labels).to_excel(
                 xl, sheet_name="usalign_TM"
             )
+        sequence_identity_labels = workbench.get(
+            "sequence_identity_labels", []
+        )
+        sequence_identity_matrix = workbench.get(
+            "sequence_identity_matrix", []
+        )
+        if sequence_identity_labels and sequence_identity_matrix:
+            pd.DataFrame(
+                sequence_identity_matrix,
+                index=sequence_identity_labels,
+                columns=sequence_identity_labels,
+            ).to_excel(xl, sheet_name="sequence_identity")
         for sheet, records in (
             ("sequence_MSA", workbench.get("sequence_msa", {})),
             ("foldmason_AA", workbench.get("structural_msa", {})),
@@ -619,14 +631,33 @@ def _domain_xlsx_b64(fam, members, edges, workbench):
             ).to_excel(
                 xl, sheet_name="structural_conservation", index=False
             )
+        sequence_conservation_rows = [
+            {
+                "segment_id": segment_id,
+                "resi": residue,
+                "sequence_conservation": score,
+            }
+            for segment_id, values in workbench.get(
+                "sequence_conservation", {}
+            ).items()
+            for residue, score in values.items()
+        ]
+        pd.DataFrame(
+            sequence_conservation_rows,
+            columns=["segment_id", "resi", "sequence_conservation"],
+        ).to_excel(
+            xl, sheet_name="sequence_conservation", index=False
+        )
         pd.DataFrame(
             [
                 ("members", "D-family segment coordinates, parent F family, and evidence."),
                 ("foldseek_local_links", "Retained local Foldseek 3Di+AA links defining the D family."),
                 ("usalign_TM", "Independent all-pairs US-align TM scores on cropped segments."),
                 ("sequence_MSA", "MAFFT MSA for the eligible sequence-homologous subgroup."),
+                ("sequence_identity", "Pairwise amino-acid identity over FoldMason-aligned domain residues."),
                 ("foldmason_AA", "FoldMason structure-guided amino-acid MSA for all segments."),
                 ("foldmason_3Di", "FoldMason 3Di structural-alphabet MSA for all segments."),
+                ("sequence_conservation", "Rate4Site conservation projected only within eligible sequence-homologous subgroups."),
                 ("trees", "FoldTree structural trees, FoldMason guide tree, and sequence trees are separate records."),
                 ("RNAseq_parent_proteins", "RNA-seq is protein-level evidence; each parent accession appears once."),
                 ("pockets_parent_mapped", "Pockets were predicted on complete parents and mapped to segment coordinates."),
@@ -743,6 +774,21 @@ def _domain_package_b64(
                 f"{root}/tables/usalign_TM.csv",
                 pd.DataFrame(matrix, index=labels, columns=labels).to_csv(),
             )
+        sequence_identity_labels = workbench.get(
+            "sequence_identity_labels", []
+        )
+        sequence_identity_matrix = workbench.get(
+            "sequence_identity_matrix", []
+        )
+        if sequence_identity_labels and sequence_identity_matrix:
+            archive.writestr(
+                f"{root}/tables/domain_sequence_identity.csv",
+                pd.DataFrame(
+                    sequence_identity_matrix,
+                    index=sequence_identity_labels,
+                    columns=sequence_identity_labels,
+                ).to_csv(),
+            )
         structural_scores = workbench.get("structural_conservation", [])
         if structural_scores:
             archive.writestr(
@@ -756,6 +802,24 @@ def _domain_package_b64(
                     }
                 ).to_csv(index=False),
             )
+        sequence_conservation_rows = [
+            {
+                "segment_id": segment_id,
+                "resi": residue,
+                "sequence_conservation": score,
+            }
+            for segment_id, values in workbench.get(
+                "sequence_conservation", {}
+            ).items()
+            for residue, score in values.items()
+        ]
+        archive.writestr(
+            f"{root}/tables/rate4site_sequence_conservation.csv",
+            pd.DataFrame(
+                sequence_conservation_rows,
+                columns=["segment_id", "resi", "sequence_conservation"],
+            ).to_csv(index=False),
+        )
         archive.writestr(
             f"{root}/superposition/transforms.json",
             json.dumps(
@@ -1455,6 +1519,23 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                     unit="TM",
                 )
             )
+        sequence_identity_labels = workbench.get(
+            "sequence_identity_labels", []
+        )
+        sequence_identity_matrix = workbench.get(
+            "sequence_identity_matrix", []
+        )
+        if sequence_identity_labels and sequence_identity_matrix:
+            workbench["sequence_identity_matrix_svg"] = _svg_datauri(
+                _svg_matrix(
+                    sequence_identity_matrix,
+                    sequence_identity_labels,
+                    "Domain sequence identity · FoldMason-aligned amino acids",
+                    vmin=0,
+                    vmax=1.0,
+                    unit="%id",
+                )
+            )
 
     def structure_text(accession, family_dir=None):
         candidates = []
@@ -1516,7 +1597,14 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     for _, r in master.iterrows():
         fam = r.family
         fd = os.path.join(famdir, fam)
-        mem_file = os.path.join(results_dir, "families", f"{fam}.members.txt")
+        mem_file = os.path.join(
+            results_dir, "family_members", f"{fam}.members.txt"
+        )
+        if not os.path.exists(mem_file):
+            # Backward compatibility for atlases produced before v5.0.1.
+            mem_file = os.path.join(
+                results_dir, "families", f"{fam}.members.txt"
+            )
         members = []
         if os.path.exists(mem_file):
             for line in open(mem_file):
@@ -2459,6 +2547,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                         "top_score",
                         "top_probability",
                         "n_pockets",
+                        "lining_residues",
                         "domain_lining_residues",
                     )
                     if result.get(key) is not None

@@ -33,7 +33,7 @@ portal atlases load large structures and downloads on demand.
 | What defines a SUSS relationship? | Structural similarity with no BLAST-detected relationship at the configured threshold |
 | How is structure independently checked? | Within-F-family and cropped-D-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | Which alignments are used? | FoldMason AA/3Di structural MSA for fold correspondence; MAFFT sequence MSA for eligible S subgroups |
-| When is Rate4Site used? | Only when the representative protein belongs to a sufficiently large sequence-homologous subgroup |
+| When is Rate4Site used? | For eligible reciprocal-coverage BLAST/MAFFT subgroups in both F and D workbenches; unrelated structural members are never forced into one sequence analysis |
 | How is structural conservation scored? | Official FoldMason per-column LDDT; columns lacking the configured pair support remain unscored |
 | What biological evidence is integrated? | Structural conservation, Rate4Site, fpocket, P2Rank, ESM-Scan, FoldTree, sequence tree, annotation, and optional RNA-seq |
 | How are singletons handled? | As independent proteins with sequence viewer/download, structure, pockets, ESM, annotation, Foldseek database hits, and optional RNA-seq; no artificial singleton cluster or pairwise family analyses |
@@ -115,8 +115,8 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/domain_families.csv` / `domain_members.csv` | Local structural-domain family summaries and protein segment coordinates |
 | `results/domain_edges.csv` / `domain_cross_edges.csv` | Segment-level local Foldseek evidence and aggregated structural bridges between D families |
-| `results/domain_workbench.json` | Per-D-family FoldMason/MAFFT alignments, independent trees, US-align matrices/transforms, conservation, statuses, and download metadata |
-| `results/domain_families/<D family>/` | Cropped structures, parent/segment FASTA, FoldMason assets, US-align matrices, optional FoldTree output, and auditable status files |
+| `results/domain_workbench.json` | Per-D-family FoldMason/MAFFT alignments, domain sequence-identity matrices, independent trees, US-align matrices/transforms, structural/sequence conservation, statuses, and download metadata |
+| `results/domain_families/<D family>/` | Cropped structures, parent/segment FASTA, FoldMason assets, sequence-identity and US-align matrices, Rate4Site conservation, optional FoldTree output, and auditable status files |
 | `results/sequence_subgroups.csv` | Sequence-homologous subgroups nested within full-length structural families |
 | `results/structure_db/atlas*` | Foldseek database used by the portal structure-search endpoint |
 | `results/structure_search_index.csv` | Protein-to-F/D/S/singleton lookup table for structure-search results |
@@ -124,6 +124,7 @@ for workflow development:
 | `results/member_annotation.csv` | Per-protein annotation values and component execution states |
 | `results/downloads/` | Server-backed family workbooks and structure ZIP files when `output.html_mode: backend` |
 | `results/families/<family>/` | Workbook and files for Foldseek/US-align, BLAST, FoldMason AA/3Di MSA, MAFFT MSA, structural and evolutionary conservation, structural/sequence trees, pockets, annotation, structures, and RNA-seq |
+| `results/family_members/` | Checkpoint-owned F-family membership files; separated from `results/families/` so re-clustering cannot delete completed family analyses |
 | Singleton downloads | Mature-sequence FASTA plus an evidence workbook with annotation, Foldseek PDB100/AFDB hits and TM scores, pockets, and RNA-seq; family-only matrices, MSA, FoldTree, conservation, and superposition are intentionally absent |
 | `results/used_config.yaml` | Effective configuration plus input hashes, resolved tools, engine version, and Git commit |
 
@@ -138,8 +139,10 @@ The combined atlas has four relationship views:
   with the matched domain highlighted; multiple checked members can be superposed using the
   domain coordinates while retaining every complete parent. FoldTree structural trees,
   FoldMason guide trees, and MAFFT/FastTree sequence trees are displayed as separate evidence
-  types. FoldMason AA/3Di, US-align, conservation, mapped pockets/ESM, RNA-seq, annotation,
-  domain/full structures, FASTA, Excel, and complete-package ZIP downloads are included.
+  types. The workbench includes a FoldMason-aligned domain sequence-identity heatmap,
+  FoldMason structural conservation, Rate4Site sequence conservation for eligible
+  BLAST-supported subgroups, mapped full-parent fpocket/P2Rank evidence, ESM, RNA-seq,
+  annotation, domain/full structures, FASTA, Excel, and complete-package ZIP downloads.
 - **No D-family match** lists proteins without a retained local domain-family link under the
   current thresholds. This is not interpreted as evidence that a protein contains no domains.
 - **Singletons** provides a sortable, paginated table with filters for effector calls, novelty,
@@ -148,7 +151,9 @@ The combined atlas has four relationship views:
 
 Every F family exposes mature sequences, a FoldMason AA structural MSA, the corresponding 3Di
 MSA, and, when applicable, a MAFFT sequence MSA for the representative protein's S subgroup.
-Structural conservation uses FoldMason's official per-column LDDT output. By default, a column is
+Both F and D structure viewers support white/black backgrounds and
+cartoon/surface/stick/sphere/line representations. Structural conservation uses FoldMason's
+official per-column LDDT output. By default, a column is
 colored only when at least half of structure-pair subalignments support it; unsupported residues
 are grey rather than being interpreted as variable or conserved. Red is high structural
 conservation and blue is low structural conservation. Evolutionary conservation is reported
