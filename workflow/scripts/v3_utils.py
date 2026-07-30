@@ -34,7 +34,9 @@ def coverage(alnlen: object, length: object) -> float:
         total = float(length)
     except (TypeError, ValueError):
         return math.nan
-    return aligned / total if total > 0 else math.nan
+    if total <= 0:
+        return math.nan
+    return min(1.0, max(0.0, aligned / total))
 
 
 def select_blast_relationships(
@@ -66,6 +68,126 @@ def select_blast_relationships(
         .drop_duplicates("pair", keep="first")
         .reset_index(drop=True)
     )
+
+
+def domain_sequence_records(
+    members: pd.DataFrame,
+    parent_sequences: dict[str, str],
+) -> tuple[dict[str, str], pd.DataFrame]:
+    """Extract coordinate-defined domain sequences with an auditable manifest."""
+    records: dict[str, str] = {}
+    rows = []
+    required = {"domain_family", "segment_id", "acc", "start", "end"}
+    missing = required - set(members.columns)
+    if missing:
+        raise ValueError(
+            "domain member table is missing columns: " + ", ".join(sorted(missing))
+        )
+    ordered = members.sort_values(
+        ["domain_family", "segment_id"], kind="stable"
+    )
+    for row in ordered.itertuples():
+        family = str(row.domain_family)
+        segment_id = str(row.segment_id)
+        accession = str(row.acc)
+        start, end = int(row.start), int(row.end)
+        sequence = parent_sequences.get(accession, "")
+        if not sequence:
+            raise ValueError(f"{segment_id}: parent sequence {accession} is missing")
+        if start < 1 or end < start or end > len(sequence):
+            raise ValueError(
+                f"{segment_id}: invalid coordinates {start}-{end} "
+                f"for {accession} length {len(sequence)}"
+            )
+        segment = sequence[start - 1:end]
+        if segment_id in records and records[segment_id] != segment:
+            raise ValueError(f"{segment_id}: duplicate identifier has different sequence")
+        records[segment_id] = segment
+        rows.append(
+            {
+                "domain_family": family,
+                "segment_id": segment_id,
+                "acc": accession,
+                "start": start,
+                "end": end,
+                "segment_length": len(segment),
+                "parent_length": len(sequence),
+            }
+        )
+    return records, pd.DataFrame(
+        rows,
+        columns=[
+            "domain_family",
+            "segment_id",
+            "acc",
+            "start",
+            "end",
+            "segment_length",
+            "parent_length",
+        ],
+    )
+
+
+def relationship_components(
+    labels: list[str],
+    relationships: pd.DataFrame,
+) -> list[list[str]]:
+    """Connected components from exact segment-to-segment relationships."""
+    ordered = list(dict.fromkeys(map(str, labels)))
+    parent = {label: label for label in ordered}
+
+    def find(item: str) -> str:
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[max(left_root, right_root)] = min(left_root, right_root)
+
+    allowed = set(ordered)
+    if relationships is not None and len(relationships):
+        for row in relationships.itertuples():
+            left, right = str(row.q), str(row.t)
+            if left in allowed and right in allowed and left != right:
+                union(left, right)
+    groups: dict[str, list[str]] = defaultdict(list)
+    for label in ordered:
+        groups[find(label)].append(label)
+    return sorted(
+        (sorted(group) for group in groups.values()),
+        key=lambda group: (-len(group), group[0]),
+    )
+
+
+def blast_identity_matrix(
+    table: pd.DataFrame,
+    labels: list[str],
+) -> list[list[float]]:
+    """Best-HSP identity matrix for exact domain-segment identifiers."""
+    ordered = list(dict.fromkeys(map(str, labels)))
+    index = {label: position for position, label in enumerate(ordered)}
+    matrix = np.zeros((len(ordered), len(ordered)), dtype=float)
+    np.fill_diagonal(matrix, 1.0)
+    if table is None or not len(table):
+        return matrix.tolist()
+    for row in table.itertuples():
+        left, right = str(row.q), str(row.t)
+        if left not in index or right not in index:
+            continue
+        try:
+            identity = float(row.pident) / 100.0
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(identity):
+            continue
+        left_index, right_index = index[left], index[right]
+        value = max(matrix[left_index, right_index], identity)
+        matrix[left_index, right_index] = value
+        matrix[right_index, left_index] = value
+    return matrix.round(6).tolist()
 
 
 def whole_fold_edges(

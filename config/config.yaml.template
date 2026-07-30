@@ -68,7 +68,9 @@ signals:                          # locked; not recommended to change
     small_family_max: 3
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
-  esm_scope: representatives      # representatives | all_proteins (very expensive)
+  esm_scope: family_representatives  # F representatives + F singletons + independent D hubs
+                                     # domain_members / all_proteins are exhaustive, high-cost modes
+  esm_workers: 1                  # increase only after confirming GPU memory; 4070 12 GB can use 2
   pockets: [fpocket, p2rank]
   min_rate4site_sequences: 4
 

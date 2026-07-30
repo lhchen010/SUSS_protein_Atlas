@@ -465,6 +465,21 @@ def _domain_xlsx_b64(fam, members, edges, workbench):
                 index=sequence_identity_labels,
                 columns=sequence_identity_labels,
             ).to_excel(xl, sheet_name="sequence_identity")
+        structural_identity_labels = workbench.get(
+            "structural_alignment_identity_labels", []
+        )
+        structural_identity_matrix = workbench.get(
+            "structural_alignment_identity_matrix", []
+        )
+        if structural_identity_labels and structural_identity_matrix:
+            pd.DataFrame(
+                structural_identity_matrix,
+                index=structural_identity_labels,
+                columns=structural_identity_labels,
+            ).to_excel(xl, sheet_name="foldmason_AA_identity")
+        pd.DataFrame(workbench.get("domain_blast_edges", [])).to_excel(
+            xl, sheet_name="domain_blastp_hits", index=False
+        )
         for sheet, records in (
             ("sequence_MSA", workbench.get("sequence_msa", {})),
             ("foldmason_AA", workbench.get("structural_msa", {})),
@@ -654,7 +669,9 @@ def _domain_xlsx_b64(fam, members, edges, workbench):
                 ("foldseek_local_links", "Retained local Foldseek 3Di+AA links defining the D family."),
                 ("usalign_TM", "Independent all-pairs US-align TM scores on cropped segments."),
                 ("sequence_MSA", "MAFFT MSA for the eligible sequence-homologous subgroup."),
-                ("sequence_identity", "Pairwise amino-acid identity over FoldMason-aligned domain residues."),
+                ("sequence_identity", "Best-HSP BLASTp identity from the independently searched domain-segment FASTA."),
+                ("domain_blastp_hits", "Domain-segment BLASTp hits used to define sequence-homologous D subgroups."),
+                ("foldmason_AA_identity", "Amino-acid identity over the structural FoldMason alignment; kept separate from sequence search."),
                 ("foldmason_AA", "FoldMason structure-guided amino-acid MSA for all segments."),
                 ("foldmason_3Di", "FoldMason 3Di structural-alphabet MSA for all segments."),
                 ("sequence_conservation", "Rate4Site conservation projected only within eligible sequence-homologous subgroups."),
@@ -789,6 +806,27 @@ def _domain_package_b64(
                     columns=sequence_identity_labels,
                 ).to_csv(),
             )
+        structural_identity_labels = workbench.get(
+            "structural_alignment_identity_labels", []
+        )
+        structural_identity_matrix = workbench.get(
+            "structural_alignment_identity_matrix", []
+        )
+        if structural_identity_labels and structural_identity_matrix:
+            archive.writestr(
+                f"{root}/tables/foldmason_AA_identity.csv",
+                pd.DataFrame(
+                    structural_identity_matrix,
+                    index=structural_identity_labels,
+                    columns=structural_identity_labels,
+                ).to_csv(),
+            )
+        archive.writestr(
+            f"{root}/tables/domain_blastp_hits.csv",
+            pd.DataFrame(workbench.get("domain_blast_edges", [])).to_csv(
+                index=False
+            ),
+        )
         structural_scores = workbench.get("structural_conservation", [])
         if structural_scores:
             archive.writestr(
@@ -1530,10 +1568,29 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 _svg_matrix(
                     sequence_identity_matrix,
                     sequence_identity_labels,
-                    "Domain sequence identity · FoldMason-aligned amino acids",
+                    "Domain-segment BLASTp identity",
                     vmin=0,
                     vmax=1.0,
                     unit="%id",
+                )
+            )
+        structural_identity_labels = workbench.get(
+            "structural_alignment_identity_labels", []
+        )
+        structural_identity_matrix = workbench.get(
+            "structural_alignment_identity_matrix", []
+        )
+        if structural_identity_labels and structural_identity_matrix:
+            workbench["structural_alignment_identity_matrix_svg"] = (
+                _svg_datauri(
+                    _svg_matrix(
+                        structural_identity_matrix,
+                        structural_identity_labels,
+                        "FoldMason-aligned amino-acid identity",
+                        vmin=0,
+                        vmax=1.0,
+                        unit="%id",
+                    )
                 )
             )
 

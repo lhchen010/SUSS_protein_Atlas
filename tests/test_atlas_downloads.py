@@ -580,9 +580,9 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "function setDomainBackground" in renderer
     assert "function setDomainRep" in renderer
     assert "function setDomainPocket" in renderer
-    assert "Domain sequence identity heatmap" in renderer
+    assert "Domain-segment BLASTp identity" in renderer
     assert "Sequence conservation" in renderer
-    assert "Rate4Site sequence conservation" in renderer
+    assert "Rate4Site uses only independently searched D-segment" in renderer
     assert "function setViewerBackground" in renderer
     assert "Foldseek TM matrix was not available" in renderer
     assert "Independent US-align matrix was not available" in renderer
@@ -678,6 +678,16 @@ def test_domain_downloads_include_segments_parents_and_manifest():
                 "structural_conservation": [0.8, None],
                 "sequence_identity_labels": ["A:1-2"],
                 "sequence_identity_matrix": [[1.0]],
+                "structural_alignment_identity_labels": ["A:1-2"],
+                "structural_alignment_identity_matrix": [[1.0]],
+                "domain_blast_edges": [
+                    {
+                        "q": "A:1-2",
+                        "t": "B:2-3",
+                        "pident": 25.0,
+                        "min_coverage": 0.8,
+                    }
+                ],
                 "sequence_conservation": {
                     "A:1-2": {"1": 0.8, "2": -0.2}
                 },
@@ -703,6 +713,8 @@ def test_domain_downloads_include_segments_parents_and_manifest():
             in names
         )
         assert "D0_domain_family/tables/domain_sequence_identity.csv" in names
+        assert "D0_domain_family/tables/foldmason_AA_identity.csv" in names
+        assert "D0_domain_family/tables/domain_blastp_hits.csv" in names
         assert (
             "D0_domain_family/tables/rate4site_sequence_conservation.csv"
             in names
@@ -737,6 +749,15 @@ def test_domain_workbook_keeps_explicit_sequence_msa_status_when_not_applicable(
             "structural_conservation": [0.8, None],
             "sequence_identity_labels": ["A:1-2"],
             "sequence_identity_matrix": [[1.0]],
+            "structural_alignment_identity_labels": ["A:1-2"],
+            "structural_alignment_identity_matrix": [[1.0]],
+            "domain_blast_edges": [
+                {
+                    "q": "A:1-2",
+                    "t": "A:1-2",
+                    "pident": 100.0,
+                }
+            ],
             "sequence_conservation": {"A:1-2": {"1": 0.8}},
         },
     )
@@ -744,6 +765,8 @@ def test_domain_workbook_keeps_explicit_sequence_msa_status_when_not_applicable(
     workbook = pd.ExcelFile(io.BytesIO(base64.b64decode(encoded)))
     assert "sequence_MSA" in workbook.sheet_names
     assert "sequence_identity" in workbook.sheet_names
+    assert "foldmason_AA_identity" in workbook.sheet_names
+    assert "domain_blastp_hits" in workbook.sheet_names
     assert "sequence_conservation" in workbook.sheet_names
     sequence_msa = workbook.parse("sequence_MSA")
     assert sequence_msa.loc[0, "status"] == "not_applicable"
@@ -778,6 +801,8 @@ def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
     assert "profile_marker" in pocket_script
     assert "cached_profiles" in pocket_script
     assert 'scope == "all_proteins"' in esm_script
+    assert 'scope == "domain_members"' in esm_script
+    assert 'scope == "family_representatives"' in esm_script
     assert 'scope == "representatives"' in esm_script
     assert "set(family_refs.values()) | singletons" in esm_script
     assert 'f"*_{accession}-res-in-matrix.csv"' in esm_script
@@ -787,6 +812,9 @@ def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
     assert "json.dumps(json_safe(payload)" in domain_script
     assert "not math.isfinite(value)" in domain_script
     assert "domain workbench: disabled" in domain_script
+    assert 'payload = {"schema_version": 4' in domain_script
+    assert "snakemake.input.domain_blastp" in domain_script
+    assert "snakemake.input.blastp" not in domain_script
     assert "AlphaFold / predicted structures" in portal
     assert 'cfg.setdefault("pocket", {}).update' in portal
     assert 'domain_foldtree=ck("domain_foldtree")' in portal
@@ -828,12 +856,24 @@ def test_viewer_context_conservation_mapping_and_analysis_axes_are_explicit():
     assert 'preferred="quality"' in renderer
     assert 'id="bquality" class="on"' in renderer
     assert "function setAnalysisAxis" in renderer
+    assert "parent-context ESM-1b" in renderer
+    assert "D-segment MAFFT + Rate4Site" in renderer
+    assert "Domain-segment BLASTp identity" in renderer
     assert 'id="scopefull"' in prefix
     assert 'id="scopedomain"' in prefix
     assert 'id="fullModeTabs"' in prefix
     assert 'id="domainModeTabs"' in prefix
     assert "Full-length analysis" in prefix
     assert "Domain analysis" in prefix
+
+
+def test_domain_sequence_search_is_a_declared_independent_workflow():
+    snakefile = (ROOT / "workflow" / "Snakefile").read_text()
+
+    assert "rule domain_sequences:" in snakefile
+    assert "rule domain_blastp:" in snakefile
+    assert 'domain_blastp=f"{RESULTS}/domain_blastp_allvsall.tsv"' in snakefile
+    assert 'domain_manifest=f"{RESULTS}/domain_sequence_manifest.csv"' in snakefile
 
 
 def test_domain_annotations_require_coordinate_overlap():

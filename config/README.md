@@ -30,9 +30,14 @@ the actual method and recovery status in `<family>_foldtree_status.json`.
 default because large domain atlases can contain hundreds of families. FoldMason structural
 guide trees remain available when this option is off.
 
-`signals.esm_scope` defaults to `representatives`: F-family reference proteins plus protein
-singletons, matching the Full workbench evidence model. `all_proteins` is available for an
-explicit exhaustive scan, but `masked-marginals` can require orders of magnitude more GPU time.
+`signals.esm_scope` defaults to `family_representatives`: F-family reference proteins,
+protein singletons, and each D family's independently selected structural hub. Thus D-family
+ESM never borrows an unrelated F representative. `representatives` retains the smaller
+Full-only target set, `domain_members` adds every parent represented in a D family, and
+`all_proteins` scans the complete input. The exhaustive modes can require orders of
+magnitude more GPU time with `masked-marginals`.
+`signals.esm_workers` controls concurrent ESM-Scan subprocesses. Keep it at `1` unless
+GPU memory has been validated; the 12 GB RTX 4070 reference configuration uses `2`.
 
 `pocket.p2rank_profile` selects the P2Rank feature profile. Use `alphafold` for the
 predicted structures expected by this workflow. AlphaFold PDB files store pLDDT in the

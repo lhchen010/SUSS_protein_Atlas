@@ -14,7 +14,13 @@ import pandas as pd
 
 from foldtree_runner import run_foldtree_family
 from runtime_utils import resolve_executable
-from v3_utils import fasta_records, foldmason_column_scores, protein_id
+from v3_utils import (
+    blast_identity_matrix,
+    fasta_records,
+    foldmason_column_scores,
+    relationship_components,
+    select_blast_relationships,
+)
 
 
 def segment_pdb(path: Path, start: int, end: int) -> str:
@@ -202,60 +208,19 @@ def run_usalign(usalign: str, mobile: Path, reference: Path):
 
 def sequence_components(
     segment_ids: list[str],
-    accession_by_segment: dict[str, str],
     blast: pd.DataFrame,
     evalue_threshold: float,
     coverage_threshold: float,
 ) -> list[list[str]]:
-    parent = {segment_id: segment_id for segment_id in segment_ids}
-
-    def find(item):
-        while parent[item] != item:
-            parent[item] = parent[parent[item]]
-            item = parent[item]
-        return item
-
-    def union(left, right):
-        left_root, right_root = find(left), find(right)
-        if left_root != right_root:
-            parent[max(left_root, right_root)] = min(left_root, right_root)
-
-    for index, left in enumerate(segment_ids):
-        for right in segment_ids[index + 1:]:
-            if accession_by_segment[left] == accession_by_segment[right]:
-                union(left, right)
-
-    accessions = set(accession_by_segment.values())
     selected = blast[
-        blast.q.isin(accessions)
-        & blast.t.isin(accessions)
-        & (blast.evalue <= evalue_threshold)
-        & (blast.min_coverage >= coverage_threshold)
-    ]
-    related = {
-        tuple(sorted((str(row.q), str(row.t))))
-        for row in selected.itertuples()
-    }
-    for index, left in enumerate(segment_ids):
-        for right in segment_ids[index + 1:]:
-            pair = tuple(
-                sorted(
-                    (
-                        accession_by_segment[left],
-                        accession_by_segment[right],
-                    )
-                )
-            )
-            if pair in related:
-                union(left, right)
-
-    groups = {}
-    for segment_id in segment_ids:
-        groups.setdefault(find(segment_id), []).append(segment_id)
-    return sorted(
-        (sorted(group) for group in groups.values()),
-        key=lambda group: (-len(group), group[0]),
+        blast.q.isin(segment_ids) & blast.t.isin(segment_ids)
+    ].copy()
+    selected = select_blast_relationships(
+        selected,
+        evalue_threshold=evalue_threshold,
+        coverage_threshold=coverage_threshold,
     )
+    return relationship_components(segment_ids, selected)
 
 
 def configured_tool(value, name, required=True):
@@ -276,17 +241,28 @@ if assets_root.exists():
 assets_root.mkdir(parents=True)
 if not bool(snakemake.params.enabled):
     output.write_text(
-        json.dumps({"schema_version": 3, "families": {}}, indent=2) + "\n",
+        json.dumps({"schema_version": 4, "families": {}}, indent=2) + "\n",
         encoding="utf-8",
     )
     print(f"domain workbench: disabled -> {output}")
     sys.exit(0)
 
-mafft = configured_tool(snakemake.params.mafft, "MAFFT")
-fasttree = configured_tool(snakemake.params.fasttree, "FastTree")
 usalign = configured_tool(snakemake.params.usalign, "US-align")
 foldmason = configured_tool(snakemake.params.foldmason, "FoldMason")
 conservation_enabled = bool(snakemake.params.conservation_enabled)
+sequence_enabled = (
+    bool(snakemake.params.sequence_enabled) or conservation_enabled
+)
+mafft = (
+    configured_tool(snakemake.params.mafft, "MAFFT")
+    if sequence_enabled
+    else ""
+)
+fasttree = (
+    configured_tool(snakemake.params.fasttree, "FastTree")
+    if sequence_enabled
+    else ""
+)
 rate4site = (
     configured_tool(snakemake.params.rate4site, "Rate4Site")
     if conservation_enabled
@@ -321,18 +297,21 @@ blast_columns = [
     "slen",
 ]
 try:
-    blast = pd.read_csv(snakemake.input.blastp, sep="\t", names=blast_columns)
+    blast = pd.read_csv(
+        snakemake.input.domain_blastp, sep="\t", names=blast_columns
+    )
 except (pd.errors.EmptyDataError, FileNotFoundError):
     blast = pd.DataFrame(columns=blast_columns)
 if len(blast):
-    blast["q"] = blast["query"].map(protein_id)
-    blast["t"] = blast["target"].map(protein_id)
+    blast["q"] = blast["query"].astype(str)
+    blast["t"] = blast["target"].astype(str)
+    blast = blast[blast.q != blast.t].copy()
     blast["min_coverage"] = np.minimum(
         pd.to_numeric(blast.alnlen, errors="coerce")
         / pd.to_numeric(blast.qlen, errors="coerce"),
         pd.to_numeric(blast.alnlen, errors="coerce")
         / pd.to_numeric(blast.slen, errors="coerce"),
-    )
+    ).clip(lower=0.0, upper=1.0)
 else:
     blast["q"] = pd.Series(dtype=str)
     blast["t"] = pd.Series(dtype=str)
@@ -351,7 +330,7 @@ for row in qc.itertuples():
         (candidate for candidate in candidates if candidate.is_file()), None
     )
 
-payload = {"schema_version": 3, "families": {}}
+payload = {"schema_version": 4, "families": {}}
 for family, group in members.groupby("domain_family", sort=False):
     family = str(family)
     family_dir = assets_root / family
@@ -504,21 +483,38 @@ for family, group in members.groupby("domain_family", sort=False):
     sequence_conservation = {}
     components = sequence_components(
         segment_ids,
-        accession_by_segment,
         blast,
         float(snakemake.params.blast_evalue),
         float(snakemake.params.blast_coverage),
     )
+    family_blast = blast[
+        blast.q.isin(segment_ids) & blast.t.isin(segment_ids)
+    ].copy()
+    family_relationships = select_blast_relationships(
+        family_blast,
+        evalue_threshold=float(snakemake.params.blast_evalue),
+        coverage_threshold=float(snakemake.params.blast_coverage),
+    )
     for subgroup_index, component in enumerate(components):
         subgroup_id = f"{family}.S{subgroup_index}"
+        component_set = set(component)
+        subgroup_relationships = family_relationships[
+            family_relationships.q.isin(component_set)
+            & family_relationships.t.isin(component_set)
+        ]
         subgroup = {
             "id": subgroup_id,
             "members": component,
+            "n_sequences": len(component),
+            "n_relationships": len(subgroup_relationships),
             "status": "sequence_singleton",
             "msa": {},
             "newick": "",
             "sequence_conservation_status": "not_applicable",
             "sequence_conservation_reference": "",
+            "minimum_conservation_sequences": (
+                minimum_conservation_sequences
+            ),
         }
         subgroup_sequences = {
             segment_id: segment_sequences[segment_id]
@@ -753,11 +749,17 @@ for family, group in members.groupby("domain_family", sort=False):
             if score is not None and math.isfinite(float(score)):
                 hub_structural_conservation[residue] = round(float(score), 6)
             residue += 1
-    sequence_identity_labels = [
+    structural_identity_labels = [
         segment_id for segment_id in segment_ids if segment_id in structural_msa
     ]
-    sequence_identity_matrix = aligned_identity_matrix(
-        structural_msa, sequence_identity_labels
+    structural_identity_matrix = aligned_identity_matrix(
+        structural_msa, structural_identity_labels
+    )
+    sequence_identity_labels = [
+        segment_id for segment_id in segment_ids if segment_id in segment_sequences
+    ]
+    sequence_identity_matrix = blast_identity_matrix(
+        family_blast, sequence_identity_labels
     )
     if sequence_identity_labels:
         pd.DataFrame(
@@ -765,6 +767,14 @@ for family, group in members.groupby("domain_family", sort=False):
             index=sequence_identity_labels,
             columns=sequence_identity_labels,
         ).to_csv(family_dir / f"{family}_domain_sequence_identity.csv")
+    if structural_identity_labels:
+        pd.DataFrame(
+            structural_identity_matrix,
+            index=structural_identity_labels,
+            columns=structural_identity_labels,
+        ).to_csv(
+            family_dir / f"{family}_foldmason_AA_identity.csv"
+        )
     conservation_rows = [
         {
             "subgroup": next(
@@ -808,7 +818,33 @@ for family, group in members.groupby("domain_family", sort=False):
         "sequence_conservation": sequence_conservation,
         "sequence_identity_labels": sequence_identity_labels,
         "sequence_identity_matrix": sequence_identity_matrix,
-        "sequence_identity_method": "FoldMason-aligned domain amino-acid identity",
+        "sequence_identity_method": "Domain-segment BLASTp best-HSP identity",
+        "sequence_search_scope": "cropped_domain_segments",
+        "sequence_relationship_evalue": float(
+            snakemake.params.blast_evalue
+        ),
+        "sequence_relationship_min_reciprocal_coverage": float(
+            snakemake.params.blast_coverage
+        ),
+        "structural_alignment_identity_labels": structural_identity_labels,
+        "structural_alignment_identity_matrix": structural_identity_matrix,
+        "structural_alignment_identity_method": (
+            "FoldMason-aligned domain amino-acid identity"
+        ),
+        "domain_blast_edges": [
+            {
+                "q": str(row.q),
+                "t": str(row.t),
+                "pident": float(row.pident),
+                "alnlen": int(row.alnlen),
+                "evalue": float(row.evalue),
+                "bitscore": float(row.bitscore),
+                "qlen": int(row.qlen),
+                "slen": int(row.slen),
+                "min_coverage": float(row.min_coverage),
+            }
+            for row in family_blast.itertuples()
+        ],
         "sequence_msa": primary_subgroup.get("msa", {}),
         "sequence_newick": primary_subgroup.get("newick", ""),
         "sequence_subgroups": sequence_subgroups,

@@ -171,15 +171,15 @@ def form_page(msg_html=""):
           <label><input type=radio name=analysis_scope value=full> Full-length only — F families and protein singletons</label>
           <label><input type=radio name=analysis_scope value=domain> Domain-aware only — D families and unclustered proteins</label>
         </div>
-        <div class=hint style="margin:3px 0 8px">Combined runs one shared Foldseek search backbone and creates one HTML with linked F↔D workbenches. Domain-only still retains the lightweight parent-family mapping needed to explain where each domain came from.</div>
+        <div class=hint style="margin:3px 0 8px">Combined creates one HTML with linked F↔D workbenches. F sequence evolution uses complete proteins; D sequence evolution independently searches and aligns cropped domain segments. Domain-only retains the lightweight parent-family mapping needed to explain where each domain came from.</div>
         <div class=toggles>
           <label><input type=checkbox checked disabled> QC</label>
           <label><input type=checkbox checked disabled> Cluster</label>
           <label><input type=checkbox name=classify checked> Classify (BLAST)</label>
-          <label><input type=checkbox name=sequence_msa checked> F-family sequence MSA / tree</label>
-          <label><input type=checkbox name=conservation checked> F-family Rate4Site conservation</label>
+          <label><input type=checkbox name=sequence_msa checked> Sequence MSA / tree (F proteins + independent D segments)</label>
+          <label><input type=checkbox name=conservation checked> Rate4Site conservation (eligible F/D subgroups)</label>
           <label><input type=checkbox name=pocket checked> Pocket (fpocket/P2Rank)</label>
-          <label><input type=checkbox name=esm checked> ESM tolerance</label>
+          <label><input type=checkbox name=esm checked> ESM tolerance (F representatives, singletons, independent D hubs)</label>
           <label><input type=checkbox name=foldtree checked> FoldTree for F families</label>
           <label><input type=checkbox name=domain_foldtree> FoldTree for D families <span class=hint>(advanced; slower)</span></label>
           <label><input type=checkbox name=annotate checked> Annotate (InterPro/Foldseek/EffectorP)</label>
@@ -689,6 +689,23 @@ def status_page(job_id):
                 f"<p class=hint>You can leave this open; the build continues on the server.</p>")
 
 # ------------------------------------------------------------------ pipeline
+def _ensure_engine_config(eng):
+    """Create the mutable per-job config from the shipped 4070 reference."""
+    config_path = os.path.join(eng, "config", "config.yaml")
+    if os.path.exists(config_path):
+        return config_path, False
+    reference_config = os.path.join(
+        eng, "config", "config.yaml.4070.example"
+    )
+    if not os.path.exists(reference_config):
+        raise FileNotFoundError(
+            "engine archive contains no config/config.yaml or "
+            "config/config.yaml.4070.example"
+        )
+    shutil.copyfile(reference_config, config_path)
+    return config_path, True
+
+
 def _write_config(eng, meta):
     """Overlay the user's choices onto the engine's SHIPPED config.yaml (which carries all
     tool paths, the signals block, and other locked defaults) and write it back. Overwriting
@@ -748,6 +765,9 @@ def run_pipeline(job_id, meta, files):
         if files.get("rnaseq"): open(os.path.join(updir, "rnaseq.xlsx"), "wb").write(files["rnaseq"])
         with tarfile.open(ENGINE_TAR) as t:
             _safe_extract_engine(t, eng)
+        _, initialized_config = _ensure_engine_config(eng)
+        if initialized_config:
+            _log(j, "initialized config.yaml from the 4070 reference config")
         # engine tars are packed with -C suss_engine . so contents land directly in eng/
         pdbdir = os.path.join(eng, "input", "pdb"); os.makedirs(pdbdir, exist_ok=True)
         # stage PDB tarball

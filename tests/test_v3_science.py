@@ -9,9 +9,13 @@ sys.path.insert(0, str(ROOT / "workflow" / "scripts"))
 
 from v3_utils import (
     aggregate_domain_bridges,
+    blast_identity_matrix,
+    coverage,
+    domain_sequence_records,
     domain_segments,
     foldmason_column_scores,
     merge_intervals,
+    relationship_components,
     select_blast_relationships,
     whole_fold_edges,
 )
@@ -78,6 +82,12 @@ def test_blast_relationship_uses_best_hit_that_passes_coverage():
     assert len(selected) == 1
     assert selected.iloc[0].evalue == 1e-20
     assert selected.iloc[0].pident == 40
+
+
+def test_alignment_coverage_is_bounded_to_probability_range():
+    assert coverage(110, 100) == 1.0
+    assert coverage(-5, 100) == 0.0
+    assert pd.isna(coverage(10, 0))
 
 
 def test_interval_merging_preserves_distinct_domains():
@@ -189,3 +199,66 @@ def test_foldmason_column_scores_turn_unscored_columns_into_missing_values():
     assert pd.isna(scores[1])
     assert pd.isna(scores[2])
     assert scores[3] == 0.2
+
+
+def test_domain_sequences_are_cropped_and_keep_exact_segment_ids():
+    members = pd.DataFrame(
+        [
+            {
+                "domain_family": "D0",
+                "segment_id": "A:2-5",
+                "acc": "A",
+                "start": 2,
+                "end": 5,
+            },
+            {
+                "domain_family": "D0",
+                "segment_id": "B:1-3",
+                "acc": "B",
+                "start": 1,
+                "end": 3,
+            },
+        ]
+    )
+
+    records, manifest = domain_sequence_records(
+        members, {"A": "ABCDEFG", "B": "MNOP"}
+    )
+
+    assert records == {"A:2-5": "BCDE", "B:1-3": "MNO"}
+    assert manifest.set_index("segment_id").loc["A:2-5", "parent_length"] == 7
+
+
+def test_same_parent_domain_segments_are_not_related_without_segment_hit():
+    components = relationship_components(
+        ["A:1-50", "A:100-150", "B:5-55"],
+        pd.DataFrame([{"q": "A:1-50", "t": "B:5-55"}]),
+    )
+
+    assert components == [["A:1-50", "B:5-55"], ["A:100-150"]]
+
+
+def test_domain_blast_identity_uses_exact_segments_not_parent_accessions():
+    matrix = blast_identity_matrix(
+        pd.DataFrame(
+            [
+                {
+                    "q": "A:1-50",
+                    "t": "B:5-55",
+                    "pident": 42.0,
+                },
+                {
+                    "q": "A:100-150",
+                    "t": "B:5-55",
+                    "pident": 18.0,
+                },
+            ]
+        ),
+        ["A:1-50", "A:100-150", "B:5-55"],
+    )
+
+    assert matrix == [
+        [1.0, 0.0, 0.42],
+        [0.0, 1.0, 0.18],
+        [0.42, 0.18, 1.0],
+    ]
