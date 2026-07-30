@@ -11,6 +11,7 @@ from v3_utils import (
     aggregate_domain_bridges,
     blast_identity_matrix,
     coverage,
+    domain_match_diagnostics,
     domain_sequence_records,
     domain_segments,
     foldmason_column_scores,
@@ -166,6 +167,71 @@ def test_domain_segments_reject_low_local_lddt_even_with_high_probability():
 
     assert segments.empty
     assert edges.empty
+
+
+def test_domain_diagnostics_explain_borderline_lddt_without_changing_membership():
+    hits = pd.DataFrame(
+        [
+            {
+                "query": "A.pdb",
+                "target": "B.pdb",
+                "qstart": 4,
+                "qend": 160,
+                "tstart": 2,
+                "tend": 158,
+                "alnlen": 157,
+                "qlen": 164,
+                "tlen": 161,
+                "evalue": 1e-8,
+                "prob": 1.0,
+                "bits": 120,
+                "alntmscore": 0.56,
+                "lddt": 0.469,
+                "fident": 0.15,
+                "qcov": 0.957,
+                "tcov": 0.975,
+            },
+            {
+                "query": "C.pdb",
+                "target": "A.pdb",
+                "qstart": 1,
+                "qend": 160,
+                "tstart": 3,
+                "tend": 162,
+                "alnlen": 160,
+                "qlen": 162,
+                "tlen": 164,
+                "evalue": 1e-7,
+                "prob": 1.0,
+                "bits": 118,
+                "alntmscore": 0.55,
+                "lddt": 0.4974,
+                "fident": 0.14,
+                "qcov": 0.988,
+                "tcov": 0.976,
+            },
+        ]
+    )
+
+    diagnostics = domain_match_diagnostics(
+        hits,
+        ["A", "B", "C", "D"],
+        set(),
+        evalue_threshold=1e-3,
+        probability_threshold=0.5,
+        min_aligned_residues=40,
+        min_shorter_coverage=0.0,
+        min_lddt=0.5,
+        min_alntm=0.0,
+        borderline_lddt_margin=0.05,
+    ).set_index("acc")
+
+    assert diagnostics.loc["A", "status"] == "borderline"
+    assert diagnostics.loc["A", "best_match"] == "C"
+    assert diagnostics.loc["A", "lddt"] == 0.4974
+    assert diagnostics.loc["A", "failed_filters"] == "local lDDT 0.497 < 0.5"
+    assert diagnostics.loc["A", "passes_all"] == False
+    assert diagnostics.loc["D", "status"] == "no_raw_hit"
 
 
 def test_domain_coverage_is_bounded_and_cross_family_bridges_are_aggregated():

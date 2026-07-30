@@ -434,6 +434,332 @@ def domain_segments(
     ]
 
 
+def domain_match_diagnostics(
+    table: pd.DataFrame,
+    accessions: list[str],
+    assigned_accessions: set[str],
+    *,
+    evalue_threshold: float,
+    probability_threshold: float,
+    min_aligned_residues: int,
+    min_shorter_coverage: float,
+    min_lddt: float,
+    min_alntm: float,
+    borderline_lddt_margin: float = 0.05,
+) -> pd.DataFrame:
+    """Report the best local hit and exact filter outcome for every protein.
+
+    This diagnostic does not alter D-family membership. A borderline hit must
+    pass every configured filter except local lDDT and fall within the lDDT
+    margin.
+    """
+    output_columns = [
+        "acc",
+        "status",
+        "best_match",
+        "protein_start",
+        "protein_end",
+        "match_start",
+        "match_end",
+        "protein_length",
+        "match_length",
+        "evalue",
+        "prob",
+        "bits",
+        "alntmscore",
+        "lddt",
+        "fident",
+        "protein_coverage",
+        "match_coverage",
+        "shorter_coverage",
+        "alnlen",
+        "raw_hit_count",
+        "passed_filter_count",
+        "passes_all",
+        "failed_filters",
+        "summary",
+    ]
+    ordered_accessions = list(dict.fromkeys(map(str, accessions)))
+    data = table.copy()
+    for column in (
+        "query",
+        "target",
+        "qstart",
+        "qend",
+        "tstart",
+        "tend",
+        "alnlen",
+        "qlen",
+        "tlen",
+        "evalue",
+        "prob",
+        "bits",
+        "alntmscore",
+        "lddt",
+        "fident",
+        "qcov",
+        "tcov",
+    ):
+        if column not in data:
+            data[column] = np.nan
+    if data.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "acc": accession,
+                    "status": (
+                        "retained_family"
+                        if accession in assigned_accessions
+                        else "no_raw_hit"
+                    ),
+                    "raw_hit_count": 0,
+                    "passed_filter_count": 0,
+                    "passes_all": False,
+                    "failed_filters": "",
+                    "summary": (
+                        "Protein has a retained D-family segment."
+                        if accession in assigned_accessions
+                        else "Foldseek reported no non-self local hit."
+                    ),
+                }
+                for accession in ordered_accessions
+            ],
+            columns=output_columns,
+        )
+
+    data["q"] = data["query"].map(protein_id)
+    data["t"] = data["target"].map(protein_id)
+    data = data[data.q != data.t].copy()
+    numeric_columns = [
+        "qstart",
+        "qend",
+        "tstart",
+        "tend",
+        "alnlen",
+        "qlen",
+        "tlen",
+        "evalue",
+        "prob",
+        "bits",
+        "alntmscore",
+        "lddt",
+        "fident",
+        "qcov",
+        "tcov",
+    ]
+    for column in numeric_columns:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    data["shorter_coverage"] = (
+        data.alnlen / data[["qlen", "tlen"]].min(axis=1)
+    ).clip(lower=0.0, upper=1.0)
+
+    oriented_rows = []
+    for row in data.itertuples():
+        common = {
+            "evalue": row.evalue,
+            "prob": row.prob,
+            "bits": row.bits,
+            "alntmscore": row.alntmscore,
+            "lddt": row.lddt,
+            "fident": row.fident,
+            "shorter_coverage": row.shorter_coverage,
+            "alnlen": row.alnlen,
+        }
+        oriented_rows.extend(
+            [
+                {
+                    **common,
+                    "acc": row.q,
+                    "best_match": row.t,
+                    "protein_start": row.qstart,
+                    "protein_end": row.qend,
+                    "match_start": row.tstart,
+                    "match_end": row.tend,
+                    "protein_length": row.qlen,
+                    "match_length": row.tlen,
+                    "protein_coverage": row.qcov,
+                    "match_coverage": row.tcov,
+                },
+                {
+                    **common,
+                    "acc": row.t,
+                    "best_match": row.q,
+                    "protein_start": row.tstart,
+                    "protein_end": row.tend,
+                    "match_start": row.qstart,
+                    "match_end": row.qend,
+                    "protein_length": row.tlen,
+                    "match_length": row.qlen,
+                    "protein_coverage": row.tcov,
+                    "match_coverage": row.qcov,
+                },
+            ]
+        )
+    oriented = pd.DataFrame(oriented_rows)
+    if oriented.empty:
+        return domain_match_diagnostics(
+            pd.DataFrame(),
+            ordered_accessions,
+            assigned_accessions,
+            evalue_threshold=evalue_threshold,
+            probability_threshold=probability_threshold,
+            min_aligned_residues=min_aligned_residues,
+            min_shorter_coverage=min_shorter_coverage,
+            min_lddt=min_lddt,
+            min_alntm=min_alntm,
+            borderline_lddt_margin=borderline_lddt_margin,
+        )
+
+    checks = [
+        ("evalue", oriented.evalue <= float(evalue_threshold)),
+        ("probability", oriented.prob >= float(probability_threshold)),
+        ("aligned_residues", oriented.alnlen >= int(min_aligned_residues)),
+        (
+            "shorter_coverage",
+            oriented.shorter_coverage >= float(min_shorter_coverage),
+        ),
+        ("lddt", oriented.lddt >= float(min_lddt)),
+        ("alntm", oriented.alntmscore >= float(min_alntm)),
+    ]
+    for name, values in checks:
+        oriented[f"pass_{name}"] = values.fillna(False)
+    pass_columns = [f"pass_{name}" for name, _ in checks]
+    oriented["passed_filter_count"] = oriented[pass_columns].sum(axis=1)
+    oriented["passes_all"] = oriented[pass_columns].all(axis=1)
+    non_lddt_columns = [column for column in pass_columns if column != "pass_lddt"]
+    oriented["borderline_lddt"] = (
+        oriented[non_lddt_columns].all(axis=1)
+        & ~oriented.pass_lddt
+        & (
+            oriented.lddt
+            >= float(min_lddt) - max(0.0, float(borderline_lddt_margin))
+        )
+    )
+
+    def number(value: object, digits: int = 3) -> str:
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return "NA"
+        return f"{value:.{digits}g}" if math.isfinite(value) else "NA"
+
+    def failed_filters(row: pd.Series) -> str:
+        failures = []
+        if not row.pass_evalue:
+            failures.append(
+                f"e-value {number(row.evalue)} > {number(evalue_threshold)}"
+            )
+        if not row.pass_probability:
+            failures.append(
+                "probability "
+                f"{number(row.prob)} < {number(probability_threshold)}"
+            )
+        if not row.pass_aligned_residues:
+            failures.append(
+                f"aligned residues {number(row.alnlen, 6)} "
+                f"< {int(min_aligned_residues)}"
+            )
+        if not row.pass_shorter_coverage:
+            failures.append(
+                "shorter coverage "
+                f"{number(row.shorter_coverage)} "
+                f"< {number(min_shorter_coverage)}"
+            )
+        if not row.pass_lddt:
+            failures.append(
+                f"local lDDT {number(row.lddt)} < {number(min_lddt)}"
+            )
+        if not row.pass_alntm:
+            failures.append(
+                f"alignment TM {number(row.alntmscore)} < {number(min_alntm)}"
+            )
+        return "; ".join(failures)
+
+    oriented["failed_filters"] = oriented.apply(failed_filters, axis=1)
+    oriented = oriented.sort_values(
+        [
+            "acc",
+            "passes_all",
+            "borderline_lddt",
+            "passed_filter_count",
+            "lddt",
+            "alntmscore",
+            "prob",
+            "alnlen",
+            "evalue",
+        ],
+        ascending=[True, False, False, False, False, False, False, False, True],
+        kind="stable",
+    )
+    best_by_accession = {
+        str(row.acc): row
+        for row in oriented.drop_duplicates("acc", keep="first").itertuples()
+    }
+    hit_counts = oriented.groupby("acc").size().to_dict()
+
+    records = []
+    for accession in ordered_accessions:
+        best = best_by_accession.get(accession)
+        if best is None:
+            status = (
+                "retained_family"
+                if accession in assigned_accessions
+                else "no_raw_hit"
+            )
+            records.append(
+                {
+                    "acc": accession,
+                    "status": status,
+                    "raw_hit_count": 0,
+                    "passed_filter_count": 0,
+                    "passes_all": False,
+                    "failed_filters": "",
+                    "summary": (
+                        "Protein has a retained D-family segment."
+                        if status == "retained_family"
+                        else "Foldseek reported no non-self local hit."
+                    ),
+                }
+            )
+            continue
+        if accession in assigned_accessions:
+            status = "retained_family"
+            summary = "Protein has a retained D-family segment."
+        elif bool(best.passes_all):
+            status = "unclustered_retained_hit"
+            summary = (
+                "A local hit passed the edge filters but did not produce a retained "
+                "D family under the community and minimum-size settings."
+            )
+        elif bool(best.borderline_lddt):
+            status = "borderline"
+            summary = (
+                "Best local hit passed every filter except local lDDT and is within "
+                f"{float(borderline_lddt_margin):.3f} of that cutoff."
+            )
+        else:
+            status = "filtered_hit"
+            summary = "Foldseek reported a local hit that failed one or more filters."
+        record = {
+            column: getattr(best, column)
+            for column in output_columns
+            if hasattr(best, column)
+        }
+        record.update(
+            {
+                "acc": accession,
+                "status": status,
+                "raw_hit_count": int(hit_counts.get(accession, 0)),
+                "passed_filter_count": int(best.passed_filter_count),
+                "passes_all": bool(best.passes_all),
+                "failed_filters": str(best.failed_filters),
+                "summary": summary,
+            }
+        )
+        records.append(record)
+    return pd.DataFrame(records, columns=output_columns)
+
+
 def aggregate_domain_bridges(
     edges: pd.DataFrame, segment_family: dict[str, str]
 ) -> pd.DataFrame:

@@ -558,10 +558,14 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     renderer = (ROOT / "workflow" / "builders" / "template" / "renderer.js").read_text()
     builder = (ROOT / "workflow" / "builders" / "html_builder.py").read_text()
     portal = (ROOT / "portal" / "suss_portal.py").read_text()
+    snakefile = (ROOT / "workflow" / "Snakefile").read_text()
 
     assert 'id="modedomains"' in prefix
     assert 'id="domains"' in prefix
     assert "function renderDomainTable" in renderer
+    assert "function dlDomainDiagnostics" in renderer
+    assert "Borderline local hit" in renderer
+    assert "domain_match_diagnostics.csv" in snakefile
     assert "function showDomain" in renderer
     assert renderer.count("function showDomain(id)") == 1
     assert "function showDomainSegment" in renderer

@@ -1489,6 +1489,9 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     domain_families_all = load_csv(os.path.join(results_dir, "domain_families.csv"))
     domain_edges_all = load_csv(os.path.join(results_dir, "domain_edges.csv"))
     domain_bridges_all = load_csv(os.path.join(results_dir, "domain_cross_edges.csv"))
+    domain_diagnostics_all = load_csv(
+        os.path.join(results_dir, "domain_match_diagnostics.csv")
+    )
     domain_workbench = {"schema_version": 1, "families": {}}
     domain_workbench_path = os.path.join(results_dir, "domain_workbench.json")
     if os.path.exists(domain_workbench_path):
@@ -2638,6 +2641,12 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
     assigned_domain_accessions = {
         member["acc"] for member in enriched_domain_members
     }
+    domain_diagnostics_by_acc = {}
+    if domain_diagnostics_all is not None and "acc" in domain_diagnostics_all:
+        domain_diagnostics_by_acc = {
+            str(row.acc): row
+            for row in domain_diagnostics_all.drop_duplicates("acc").itertuples()
+        }
     domain_unassigned_records = []
     if members_all is not None:
         for _, row in members_all.drop_duplicates("acc").iterrows():
@@ -2666,6 +2675,7 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             )
             p2rank = pocket_entry.get("p2rank", {}) or {}
             fpocket = pocket_entry.get("fpocket", {}) or {}
+            diagnostic = domain_diagnostics_by_acc.get(accession)
             domain_unassigned_records.append({
                 "acc": accession,
                 "parent_family": str(row.family),
@@ -2681,6 +2691,94 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 ),
                 "fpocket_score": _finite_float(fpocket.get("top_score")),
                 "expression": expression_values,
+                "domain_status": (
+                    str(diagnostic.status)
+                    if diagnostic is not None else "diagnostic_unavailable"
+                ),
+                "best_match": (
+                    str(diagnostic.best_match)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "best_match", None))
+                    else ""
+                ),
+                "protein_start": (
+                    int(diagnostic.protein_start)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "protein_start", None))
+                    else None
+                ),
+                "protein_end": (
+                    int(diagnostic.protein_end)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "protein_end", None))
+                    else None
+                ),
+                "match_start": (
+                    int(diagnostic.match_start)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "match_start", None))
+                    else None
+                ),
+                "match_end": (
+                    int(diagnostic.match_end)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "match_end", None))
+                    else None
+                ),
+                "evalue": _finite_float(
+                    getattr(diagnostic, "evalue", None)
+                    if diagnostic is not None else None
+                ),
+                "prob": _finite_float(
+                    getattr(diagnostic, "prob", None)
+                    if diagnostic is not None else None
+                ),
+                "alntmscore": _finite_float(
+                    getattr(diagnostic, "alntmscore", None)
+                    if diagnostic is not None else None
+                ),
+                "lddt": _finite_float(
+                    getattr(diagnostic, "lddt", None)
+                    if diagnostic is not None else None
+                ),
+                "fident": _finite_float(
+                    getattr(diagnostic, "fident", None)
+                    if diagnostic is not None else None
+                ),
+                "protein_coverage": _finite_float(
+                    getattr(diagnostic, "protein_coverage", None)
+                    if diagnostic is not None else None
+                ),
+                "match_coverage": _finite_float(
+                    getattr(diagnostic, "match_coverage", None)
+                    if diagnostic is not None else None
+                ),
+                "shorter_coverage": _finite_float(
+                    getattr(diagnostic, "shorter_coverage", None)
+                    if diagnostic is not None else None
+                ),
+                "alnlen": _finite_float(
+                    getattr(diagnostic, "alnlen", None)
+                    if diagnostic is not None else None
+                ),
+                "raw_hit_count": (
+                    int(diagnostic.raw_hit_count)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "raw_hit_count", None))
+                    else 0
+                ),
+                "failed_filters": (
+                    str(diagnostic.failed_filters)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "failed_filters", None))
+                    else ""
+                ),
+                "domain_summary": (
+                    str(diagnostic.summary)
+                    if diagnostic is not None
+                    and pd.notna(getattr(diagnostic, "summary", None))
+                    else "Domain diagnostic was not generated for this run."
+                ),
             })
 
     D = dict(

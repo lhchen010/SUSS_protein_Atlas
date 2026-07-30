@@ -55,6 +55,8 @@ Version 5 has three separate relationship layers:
 - `domain_clustering:` defines local structural-domain `D` families using Foldseek 3Di+AA
   segment hits. The default retains links with local lDDT at least `0.5`; coverage `0.0` means
   no minimum coverage filter, allowing a shared domain inside different full-length proteins.
+  `borderline_lddt_margin` only labels near-cutoff evidence in the diagnostic report; it never
+  changes D-family membership.
 - `structural_conservation.pair_threshold:` controls the minimum fraction of FoldMason
   structure-pair subalignments that must support a column before it is colored (default `0.5`).
 - `classification:` defines sequence-homologous `S` subgroups and the SUSS divergence labels

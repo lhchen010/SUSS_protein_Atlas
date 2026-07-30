@@ -41,6 +41,7 @@ segments rather than whole proteins.
 | `domain_clustering.min_probability` | `0.5` | Minimum Foldseek hit probability |
 | `domain_clustering.min_aligned_residues` | `40` | Reject short motifs and noisy fragments |
 | `domain_clustering.min_lddt` | `0.5` | Minimum local structural agreement for a retained segment link |
+| `domain_clustering.borderline_lddt_margin` | `0.05` | Diagnostic-only window below the lDDT cutoff; does not retain an edge |
 | `domain_clustering.min_alntm` | `0.0` | Optional alignment-TM filter; zero disables this second cutoff |
 | `domain_clustering.min_shorter_coverage` | `0.0` | Allow a domain embedded in two long proteins |
 | `domain_clustering.interval_overlap` | `0.5` | Merge substantially overlapping hits into one segment |
@@ -48,6 +49,11 @@ segments rather than whole proteins.
 Example: protein A has two domains and protein B contains only one of them. They may share a
 `D` family for the matching region but remain in different `F` families. A protein may belong to
 multiple `D` families.
+
+Proteins outside a retained D family are reported in `domain_match_diagnostics.csv`. The report
+distinguishes a borderline lDDT hit, a hit rejected by one or more filters, a passing edge that
+did not survive community/minimum-size selection, and no non-self Foldseek hit. Borderline is an
+explanatory label only; it must not be interpreted as family membership.
 
 ## 3. TM score, 3Di+AA score, and coverage
 

@@ -17,8 +17,9 @@ for FoldMason, US-align, and FoldTree, and independently cropped sequences for B
 FastTree, and Rate4Site. Complete-parent superposition, mapped pockets, D-hub ESM, RNA-seq,
 coordinate-aware annotation, and complete downloads remain integrated without borrowing
 F-family evolutionary results. Every F/D relationship is bidirectionally linked. Unclustered
-proteins remain independent records, and portal atlases load large structures and downloads on
-demand.
+proteins remain independent records with an auditable best local-hit explanation that separates
+borderline evidence, filtered hits, and no raw hit. Diagnostic labels never relax D-family
+thresholds. Portal atlases load large structures and downloads on demand.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -310,6 +311,7 @@ unless all required evidence is complete.
 | [docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md) | v4.1 pocket correctness, RNA-seq repair, selectable domain superposition, deployment evidence, and Claude acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md) | v5.0.2 viewer hierarchy, all-segment structural conservation, two-axis navigation, and acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md) | v5.1 independent D-segment BLAST, D-specific sequence evolution, D-hub ESM semantics, and Claude acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md) | v5.1.1 Domain borderline/filtered-hit diagnostics, TDZ19858.1 acceptance case, and Claude test checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses
