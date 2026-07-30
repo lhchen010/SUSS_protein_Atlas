@@ -129,13 +129,34 @@ rule domain_cluster:
         min_size=config.get("domain_clustering", {}).get("min_family_size", 2)
     script: "scripts/domain_cluster.py"
 
+rule domain_sequences:
+    input:
+        members=f"{RESULTS}/domain_members.csv",
+        seqs=f"{RESULTS}/seqs.fasta"
+    output:
+        fasta=f"{RESULTS}/domain_segments.fasta",
+        manifest=f"{RESULTS}/domain_sequence_manifest.csv"
+    script: "scripts/domain_sequences.py"
+
+rule domain_blastp:
+    input: fasta=f"{RESULTS}/domain_segments.fasta"
+    output: tsv=f"{RESULTS}/domain_blastp_allvsall.tsv"
+    params:
+        blastp=TOOLS["blastp"],
+        makeblastdb=TOOLS["makeblastdb"],
+        evalue=config["classification"]["blast_evalue"],
+        enabled=on("sequence_msa", True) or on("conservation")
+    threads: 8
+    script: "scripts/domain_blast.py"
+
 rule domain_workbench:
     input:
         members=f"{RESULTS}/domain_members.csv",
         edges=f"{RESULTS}/domain_edges.csv",
         qc=f"{RESULTS}/qc.csv",
         seqs=f"{RESULTS}/seqs.fasta",
-        blastp=f"{RESULTS}/blastp_allvsall.tsv",
+        domain_blastp=f"{RESULTS}/domain_blastp_allvsall.tsv",
+        domain_manifest=f"{RESULTS}/domain_sequence_manifest.csv",
         pdb_dir=PDB_DIR
     output:
         json=f"{RESULTS}/domain_workbench.json",
@@ -146,6 +167,7 @@ rule domain_workbench:
         usalign=TOOLS.get("usalign", "USalign"),
         foldmason=TOOLS.get("foldmason", "foldmason"),
         enabled=on("domain_cluster", True),
+        sequence_enabled=on("sequence_msa", True),
         pair_threshold=config.get("structural_conservation", {}).get(
             "pair_threshold", 0.5
         ),
@@ -238,11 +260,18 @@ rule seqs:
     script: "scripts/build_seqs.py"
 
 rule esm:
-    input:  seqs=f"{RESULTS}/seqs.fasta", members=f"{RESULTS}/members.csv"
+    input:
+        seqs=f"{RESULTS}/seqs.fasta",
+        members=f"{RESULTS}/members.csv",
+        domain_members=f"{RESULTS}/domain_members.csv",
+        domain_workbench=f"{RESULTS}/domain_workbench.json"
     output: f"{RESULTS}/esm_all.csv"
     params: enabled=on("esm"), script=TOOLS.get("esm_scan", ""), model=config["signals"]["esm_model"],
             strategy=config["signals"]["plm_strategy"],
-            scope=config["signals"].get("esm_scope", "representatives"),
+            scope=config["signals"].get(
+                "esm_scope", "family_representatives"
+            ),
+            workers=config["signals"].get("esm_workers", 1),
             python=TOOLS.get("esm_python", "python")
     script: "scripts/esm_scan.py"
 

@@ -82,6 +82,21 @@ class PortalArchiveTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.portal._safe_extract_engine(archive, destination)
 
+    def test_missing_job_config_is_initialized_from_4070_reference(self):
+        with tempfile.TemporaryDirectory() as engine:
+            config = Path(engine) / "config"
+            config.mkdir()
+            reference = config / "config.yaml.4070.example"
+            reference.write_text("signals:\n  esm_scope: family_representatives\n")
+
+            path, initialized = self.portal._ensure_engine_config(engine)
+
+            self.assertTrue(initialized)
+            self.assertEqual(
+                Path(path).read_text(),
+                reference.read_text(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

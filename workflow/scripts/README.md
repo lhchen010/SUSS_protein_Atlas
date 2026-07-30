@@ -10,6 +10,9 @@ Source = analysis code recovered from artifact lineage (see recovery observation
 | classify.py | 4 classify | recovered/classification.py | Pending Refactor |
 | sasa_pocket.py | 7 sasa_pocket | recovered/sasa_all.py + fpocket_all.py + sasa_pockets.py | Pending Refactor |
 | esm_scan.py | 8 esm | recovered/esm_driver.py | Pending Refactor |
+| domain_sequences.py | domain_sequences | coordinate-cropped D-segment FASTA + manifest | Active |
+| domain_blast.py | domain_blastp | independent all-vs-all BLASTp over D segments | Active |
+| domain_workbench.py | domain_workbench | D-specific FoldMason, US-align, MAFFT/FastTree, Rate4Site, and FoldTree | Active |
 | signature.py | signature | recovered/signature.py | Pending Refactor |
 | cards.py | cards | recovered/master.py (card rendering logic) | Pending Refactor |
 | annotate.py | 10 annotate | recovered/annotation.py | Pending Refactor |

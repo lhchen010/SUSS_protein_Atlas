@@ -63,7 +63,8 @@ signals:
     small_family_max: 3
   esm_model: esm1b_t33_650M_UR50S
   plm_strategy: masked-marginals
-  esm_scope: representatives
+  esm_scope: family_representatives
+  esm_workers: 2
   pockets: [fpocket, p2rank]
   min_rate4site_sequences: 4
 

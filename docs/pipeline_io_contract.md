@@ -16,6 +16,7 @@ domain_clustering.evalue=1e-3, min_probability=0.5, min_aligned_residues=40, min
 classification.blast_evalue=1e-3, min_reciprocal_coverage=0.5
 qc.min_plddt=50, max_length=1000, min_length=50
 signals.foldtree_metrics=[foldtree,alntmscore,lddt], esm_model=esm1b, plm_strategy=masked_marginals
+signals.esm_scope=family_representatives, esm_workers=1
 ```
 
 ## Core Rule Contract
@@ -27,14 +28,16 @@ signals.foldtree_metrics=[foldtree,alntmscore,lddt], esm_model=esm1b, plm_strate
 | 3 | cluster | Foldseek TSV + qc.csv | families.csv, members.csv, edges.csv, family_members/ | igraph + Leiden | foldseek_tm, reciprocal coverage, tm_symmetric, resolution, min size | all |
 | 4 | foldseek_domains | QC-passing PDB | foldseek_domains.tsv | Foldseek easy-search, local 3Di+AA | e-value, sensitivity | all |
 | 5 | domain_cluster | local Foldseek TSV | domain_families/members/edges/cross_edges.csv | interval consolidation + Leiden | probability, aligned length, local lDDT, optional alignment TM/coverage | all |
-| 6 | domain_workbench | D members/edges + sequences/PDB | domain_workbench.json, domain identity matrices, structural/sequence conservation | FoldMason + US-align + MAFFT + FastTree + Rate4Site | configured tools and minimum subgroup size | D families |
+| 5a | domain_sequences | D members + canonical parent sequences | domain_segments.fasta, domain_sequence_manifest.csv | coordinate-aware extraction | retained D coordinates | D segments |
+| 5b | domain_blastp | domain_segments.fasta | domain_blastp_allvsall.tsv | BLASTp | e-value; downstream reciprocal segment coverage | D segments |
+| 6 | domain_workbench | D members/edges + domain BLAST + sequences/PDB | schema-4 domain_workbench.json, separate BLAST/FoldMason identity matrices, structural/sequence conservation | FoldMason + US-align + MAFFT + FastTree + Rate4Site + optional FoldTree | configured tools and minimum subgroup size | D families |
 | 7 | classify | BLAST TSV + retained F edges | classification.csv (core_SUSS/…) | qualifying-hit merge | e-value + reciprocal sequence coverage | F edges |
 | 8 | sequence_subgroups | BLAST TSV + F members | sequence_subgroups/edges.csv | connected components | e-value + reciprocal sequence coverage | F families |
 | 9 | msa | F-family member PDB | {fam}.aln, {fam}.fasta | FoldMason | — | F families n≥2 |
 | 10 | structural_conservation | FoldMason AA/3Di MSA | structural_conservation.csv/PDB | FoldMason msa2lddtjson | pair_threshold | F families n≥2 |
 | 11 | sequence_analysis | S subgroup sequences | MAFFT MSA, FastTree, Rate4Site, status | MAFFT + FastTree + Rate4Site | min subgroup size | eligible S subgroups |
 | 12 | sasa_pocket | per-protein PDB, members.csv | sasa_all.csv, pockets.json keyed by family or singleton accession | freesasa+fpocket+P2Rank (java17) | — | all proteins; pocket detection on family references and every singleton |
-| 13 | esm | canonical sequences, members.csv | esm_all.csv keyed by family or singleton accession | ESM-1b (esmscan.py) | esm_model,plm_strategy | family references and every singleton |
+| 13 | esm | canonical sequences, F/D memberships, D workbench | esm_all.csv keyed by accession plus F aliases | ESM-1b (esmscan.py) | esm_model, plm_strategy, esm_scope, esm_workers | F representatives, every Full singleton, and independent D hubs by default |
 | 14 | foldtree | family members PDB per family | {fam}_{metric}.nwk ×3 | FoldTree (snakemake pipeline) | foldtree_metrics | families n≥2 |
 | 15 | annotate | all protein PDB+seq (including singletons) | member_annotation.csv, cluster_annotation.csv | Foldseek (pdb100/afdb)+InterProScan+EffectorP+DeepTMHMM | — | all |
 | 16 | rnaseq | rnaseq.xlsx + members | {fam}_expression.csv | pandas (log2 CPM) | — | all (if data present) |

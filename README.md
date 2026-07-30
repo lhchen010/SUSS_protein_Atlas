@@ -10,14 +10,15 @@ structurally similar protein families in secreted effector repertoires.**
 SUSS Protein Atlas starts from predicted protein structures for one strain, builds
 structure-defined families, labels their sequence-divergence spectrum, and integrates independent
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
-optional expression into an interactive atlas. Version 5 separates three questions that should
+optional expression into an interactive atlas. Version 5.1 separates three questions that should
 not be collapsed into one clustering label: full-length fold families (`F`), local structural
-domain families (`D`), and sequence-homologous subgroups (`S`). D families now use the same
-evidence-oriented workbench as F families: complete-parent superposition driven by matched domain
-coordinates, FoldMason AA/3Di MSA, independent US-align matrices, structural and sequence trees,
-conservation, per-protein pockets, representative ESM scans, RNA-seq, annotation, and complete downloads. Every F/D
-relationship is bidirectionally linked. Unclustered proteins remain independent records, and
-portal atlases load large structures and downloads on demand.
+domain families (`D`), and sequence-homologous subgroups (`S`). D families use cropped structures
+for FoldMason, US-align, and FoldTree, and independently cropped sequences for BLASTp, MAFFT,
+FastTree, and Rate4Site. Complete-parent superposition, mapped pockets, D-hub ESM, RNA-seq,
+coordinate-aware annotation, and complete downloads remain integrated without borrowing
+F-family evolutionary results. Every F/D relationship is bidirectionally linked. Unclustered
+proteins remain independent records, and portal atlases load large structures and downloads on
+demand.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -29,7 +30,7 @@ portal atlases load large structures and downloads on demand.
 |---|---|
 | What defines an F family? | Global Foldseek TM similarity plus reciprocal coverage, followed by Leiden community detection |
 | What defines a D family? | Significant local Foldseek 3Di+AA segment matches; D families are independent of F families |
-| What defines an S subgroup? | Reciprocal-coverage-controlled BLAST links within an F family |
+| What defines an S subgroup? | Reciprocal-coverage-controlled BLAST links within one structural family; F families use full proteins and D families independently use cropped domain segments |
 | What defines a SUSS relationship? | Structural similarity with no BLAST-detected relationship at the configured threshold |
 | How is structure independently checked? | Within-F-family and cropped-D-family US-align TM matrices, complete-pair validation, and Foldseek/US-align agreement |
 | Which alignments are used? | FoldMason AA/3Di structural MSA for fold correspondence; MAFFT sequence MSA for eligible S subgroups |
@@ -54,8 +55,14 @@ flowchart LR
     QC --> LOCAL["Local Foldseek<br/>3Di+AA segment search"]
     LOCAL --> DGRAPH["Segment graph"]
     DGRAPH --> D["D families<br/>shared structural domains"]
-    D --> DWB["Domain workbench<br/>full parents aligned by matched domains<br/>US-align + FoldMason AA/3Di"]
-    DWB --> DTREE["FoldTree (optional)<br/>FoldMason guide tree<br/>MAFFT + FastTree subgroups"]
+    D --> DWB["Domain workbench<br/>cropped structures<br/>US-align + FoldMason AA/3Di"]
+    D --> DSEQ["Extract D-segment FASTA"]
+    DSEQ --> DBLAST["Independent domain BLASTp<br/>reciprocal segment coverage"]
+    DBLAST --> DS["D sequence subgroups"]
+    DS --> DMAFFT["D-segment MAFFT"]
+    DMAFFT --> DR4S["Rate4Site<br/>eligible D subgroups only"]
+    DMAFFT --> DSTREE["FastTree<br/>D sequence relationship"]
+    DWB --> DTREE["FoldTree (optional)<br/>FoldMason structural guide tree"]
 
     F --> FM["FoldMason AA + 3Di MSA"]
     FM --> SCONS["Structural conservation"]
@@ -67,10 +74,12 @@ flowchart LR
     MAFFT --> STREE["FastTree<br/>sequence relationship tree"]
     F --> USA["US-align validation"]
 
-    QC --> SHARED["Per-protein annotation and pockets,<br/>representative ESM, DeepTMHMM, RNA-seq"]
+    QC --> SHARED["Per-protein annotation and pockets,<br/>parent-context ESM, DeepTMHMM, RNA-seq"]
     F --> ATLAS["Interactive atlas + Excel"]
     DWB --> ATLAS
     DTREE --> ATLAS
+    DR4S --> ATLAS
+    DSTREE --> ATLAS
     SINGLE --> ATLAS
     SCONS --> ATLAS
     FT --> ATLAS
@@ -92,7 +101,7 @@ flowchart LR
     class INPUT,QC input;
     class GLOBAL,FGRAPH,F,FM,SCONS,FT,USA,DB,SEARCH structure;
     class LOCAL,DGRAPH,D,DWB domain;
-    class BLAST,S,MAFFT,R4S,STREE sequence;
+    class BLAST,S,MAFFT,R4S,STREE,DSEQ,DBLAST,DS,DMAFFT,DR4S,DSTREE sequence;
     class SINGLE,SHARED,ATLAS,LAZY output;
 ```
 
@@ -115,6 +124,8 @@ for workflow development:
 | `results/cluster_composition.xlsx` | Family membership and annotation composition |
 | `results/domain_families.csv` / `domain_members.csv` | Local structural-domain family summaries and protein segment coordinates |
 | `results/domain_edges.csv` / `domain_cross_edges.csv` | Segment-level local Foldseek evidence and aggregated structural bridges between D families |
+| `results/domain_segments.fasta` / `domain_sequence_manifest.csv` | Coordinate-cropped D-segment sequences and their parent/F-family cross-reference |
+| `results/domain_blastp_allvsall.tsv` | Independent domain-segment BLASTp search used only for D sequence subgroups, D sequence trees, and D Rate4Site eligibility |
 | `results/domain_workbench.json` | Per-D-family FoldMason/MAFFT alignments, domain sequence-identity matrices, independent trees, US-align matrices/transforms, structural/sequence conservation, statuses, and download metadata |
 | `results/domain_families/<D family>/` | Cropped structures, parent/segment FASTA, FoldMason assets, sequence-identity and US-align matrices, Rate4Site conservation, optional FoldTree output, and auditable status files |
 | `results/sequence_subgroups.csv` | Sequence-homologous subgroups nested within full-length structural families |
@@ -148,9 +159,10 @@ retained D-family match. The two-level navigation preserves this relationship ex
   with the matched domain highlighted; multiple checked members can be superposed using the
   domain coordinates while retaining every complete parent. FoldTree structural trees,
   FoldMason guide trees, and MAFFT/FastTree sequence trees are displayed as separate evidence
-  types. The workbench includes a FoldMason-aligned domain sequence-identity heatmap,
-  FoldMason structural conservation, Rate4Site sequence conservation for eligible
-  BLAST-supported subgroups, mapped full-parent fpocket/P2Rank evidence, ESM, RNA-seq,
+  types. The workbench includes an independent domain-segment BLASTp identity heatmap,
+  a separate FoldMason-aligned amino-acid identity heatmap, FoldMason structural
+  conservation, and Rate4Site sequence conservation for eligible domain-BLAST-supported
+  subgroups. Full-parent fpocket/P2Rank evidence, parent-context ESM, RNA-seq,
   annotation, domain/full structures, FASTA, Excel, and complete-package ZIP downloads.
 - **No D-family match** lists proteins without a retained local domain-family link under the
   current thresholds. This is not interpreted as evidence that a protein contains no domains.
@@ -297,6 +309,7 @@ unless all required evidence is complete.
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
 | [docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md) | v4.1 pocket correctness, RNA-seq repair, selectable domain superposition, deployment evidence, and Claude acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md) | v5.0.2 viewer hierarchy, all-segment structural conservation, two-axis navigation, and acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md) | v5.1 independent D-segment BLAST, D-specific sequence evolution, D-hub ESM semantics, and Claude acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses
