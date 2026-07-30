@@ -364,6 +364,38 @@ def _structures_zip_b64(fam, structures):
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _structure_path(accession, input_dir="", strain="", family_dir=None, fallback_dir=None):
+    """Resolve one structure by accession without assuming a filename prefix."""
+    candidates = []
+    if family_dir:
+        candidates.append(os.path.join(family_dir, f"{accession}.pdb"))
+    for root in (input_dir, fallback_dir):
+        if not root:
+            continue
+        if strain:
+            candidates.append(os.path.join(root, f"{strain}_{accession}.pdb"))
+        candidates.append(os.path.join(root, f"{accession}.pdb"))
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.isfile(candidate):
+            return candidate
+
+    prefixed_matches = []
+    for root in dict.fromkeys(root for root in (input_dir, fallback_dir) if root):
+        prefixed_matches.extend(
+            glob.glob(os.path.join(root, f"*_{glob.escape(accession)}.pdb"))
+        )
+    prefixed_matches = sorted(set(prefixed_matches))
+    if len(prefixed_matches) == 1:
+        return prefixed_matches[0]
+    if len(prefixed_matches) > 1:
+        raise RuntimeError(
+            f"Ambiguous structures for {accession}: "
+            + ", ".join(prefixed_matches)
+        )
+    return ""
+
+
 def _domain_structures_zip_b64(fam, members, parent_structures, segments_only):
     """Create a ZIP of cropped domain members or their complete parent proteins."""
     buf = io.BytesIO()
@@ -1598,21 +1630,17 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             )
 
     def structure_text(accession, family_dir=None):
-        candidates = []
-        if family_dir:
-            candidates.append(os.path.join(family_dir, f"{accession}.pdb"))
         input_dir = str(config.get("input", {}).get("pdb_dir", "") or "")
         strain = str(config.get("strain", {}).get("code", "") or "")
-        if input_dir:
-            candidates.extend([
-                os.path.join(input_dir, f"{strain}_{accession}.pdb"),
-                os.path.join(input_dir, f"{accession}.pdb"),
-            ])
-        candidates.append(os.path.join(results_dir, "..", "input", "pdb",
-                                       f"{strain}_{accession}.pdb"))
-        for candidate in candidates:
-            if os.path.exists(candidate):
-                return open(candidate, encoding="utf-8", errors="replace").read()
+        candidate = _structure_path(
+            accession,
+            input_dir=input_dir,
+            strain=strain,
+            family_dir=family_dir,
+            fallback_dir=os.path.join(results_dir, "..", "input", "pdb"),
+        )
+        if candidate:
+            return open(candidate, encoding="utf-8", errors="replace").read()
         return ""
 
     # whole-set outputs loaded once (may be absent if that step was toggled off)
@@ -1947,15 +1975,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             )
         # Backend mode keeps source structures for transforms/download generation but
         # does not duplicate them into the HTML payload.
-        source_struct = {}
-        for a in members:
-            for cand in (os.path.join(fd, f"{a}.pdb"),
-                         os.path.join(results_dir, "..", "input", "pdb", f"{config.get('strain',{}).get('code','')}_{a}.pdb")):
-                if os.path.exists(cand):
-                    source_struct[a] = open(
-                        cand, encoding="utf-8", errors="replace"
-                    ).read()
-                    break
+        source_struct = {
+            accession: pdbtext
+            for accession in members
+            if (pdbtext := structure_text(accession, family_dir=fd))
+        }
         struct = source_struct if mode == "single" else {}
         msa = _records_by_member(
             _read_fasta_records(os.path.join(fd, f"{fam}.aln")), members

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +103,25 @@ def test_structure_bundle_contains_individual_pdbs_and_manifest():
             "F0_structures/A1.pdb", "F0_structures/A2.pdb", "F0_structures/manifest.tsv"
         }
         assert archive.read("F0_structures/A1.pdb").startswith(b"ATOM")
+
+
+def test_structure_path_accepts_a_unique_non_strain_prefix(tmp_path):
+    structure = tmp_path / "legacy_A1.pdb"
+    structure.write_text(_pdb([[0, 0, 0], [1, 0, 0], [0, 1, 0]]))
+
+    resolved = html_builder._structure_path(
+        "A1", input_dir=str(tmp_path), strain="current"
+    )
+
+    assert resolved == str(structure)
+
+
+def test_structure_path_rejects_ambiguous_prefixes(tmp_path):
+    (tmp_path / "strain1_A1.pdb").write_text(_pdb([[0, 0, 0]]))
+    (tmp_path / "strain2_A1.pdb").write_text(_pdb([[1, 1, 1]]))
+
+    with pytest.raises(RuntimeError, match="Ambiguous structures for A1"):
+        html_builder._structure_path("A1", input_dir=str(tmp_path))
 
 
 def test_family_workbook_contains_complete_evidence_sheets():
@@ -785,8 +805,45 @@ def test_checkpoint_member_lists_do_not_own_family_analysis_directory():
 
     assert 'MEMBER_DIR = f"{RESULTS}/family_members"' in snakefile
     assert "famdir=directory(MEMBER_DIR)" in snakefile
-    assert 'famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"' in snakefile
+    assert snakefile.count(
+        'famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"'
+    ) == 7
+    assert 'famfile=f"{FAM_DIR}/{{fam}}.members.txt"' not in snakefile
+    signature = (
+        ROOT / "workflow" / "scripts" / "signature.py"
+    ).read_text()
+    assert "famfile = snakemake.input.famfile" in signature
+    assert (
+        'os.path.dirname(os.path.dirname(r4s_path)), f"{fam}.members.txt"'
+        not in signature
+    )
+    pocket_script = (
+        ROOT / "workflow" / "scripts" / "sasa_pocket.py"
+    ).read_text()
+    esm_script = (
+        ROOT / "workflow" / "scripts" / "esm_scan.py"
+    ).read_text()
+    assert "famdir = snakemake.input.famdir" in pocket_script
+    assert "family_member_dir = snakemake.input.famdir" in esm_script
+    assert (
+        'os.path.join(os.path.dirname(out_sasa), "families")'
+        not in pocket_script
+    )
+    assert (
+        'os.path.join(os.path.dirname(out_csv), "families")'
+        not in esm_script
+    )
     assert '"family_members", f"{fam}.members.txt"' in builder
+
+
+def test_small_disconnected_domain_overview_uses_fixed_layout():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text()
+
+    assert "fixedSmallNetwork=edges.length===0" in renderer
+    assert "node.fixed={x:true,y:true}" in renderer
+    assert "physics:fixedSmallNetwork?false:" in renderer
 
 
 def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
@@ -800,6 +857,8 @@ def test_p2rank_alphafold_profile_is_configurable_and_reference_safe():
     assert 'p2cmd.extend(["-c", p2rank_profile])' in pocket_script
     assert "shutil.rmtree(out_dir, ignore_errors=True)" in pocket_script
     assert "expected one P2Rank predictions CSV" in pocket_script
+    assert '"n_pockets": 0' in pocket_script
+    assert '"pockets": []' in pocket_script
     assert "targets = sorted(keep)" in pocket_script
     assert "ThreadPoolExecutor(max_workers=workers)" in pocket_script
     assert "profile_marker" in pocket_script

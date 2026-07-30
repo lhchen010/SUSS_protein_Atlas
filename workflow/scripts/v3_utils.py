@@ -39,6 +39,27 @@ def coverage(alnlen: object, length: object) -> float:
     return min(1.0, max(0.0, aligned / total))
 
 
+def _canonicalize_pair_direction(
+    data: pd.DataFrame,
+    swaps: tuple[tuple[str, str], ...] = (),
+) -> pd.DataFrame:
+    """Orient pair rows lexically and keep directional fields attached to IDs."""
+    output = data.copy()
+    reverse = output["q"].astype(str) > output["t"].astype(str)
+    if not reverse.any():
+        return output
+    identifiers = output.loc[reverse, ["q", "t"]].copy()
+    output.loc[reverse, "q"] = identifiers["t"].to_numpy()
+    output.loc[reverse, "t"] = identifiers["q"].to_numpy()
+    for left, right in swaps:
+        if left not in output.columns or right not in output.columns:
+            continue
+        values = output.loc[reverse, [left, right]].copy()
+        output.loc[reverse, left] = values[right].to_numpy()
+        output.loc[reverse, right] = values[left].to_numpy()
+    return output
+
+
 def select_blast_relationships(
     table: pd.DataFrame,
     *,
@@ -59,12 +80,25 @@ def select_blast_relationships(
         (data.evalue <= float(evalue_threshold))
         & (data.min_coverage >= float(coverage_threshold))
     ].copy()
-    data["pair"] = [
-        tuple(sorted((str(query), str(target))))
-        for query, target in zip(data.q, data.t)
+    data = _canonicalize_pair_direction(
+        data,
+        swaps=(("qcov", "scov"), ("qlen", "slen")),
+    )
+    data["pair"] = list(zip(data.q.astype(str), data.t.astype(str)))
+    tie_columns = [
+        column
+        for column in ("pident", "min_coverage", "q", "t")
+        if column in data.columns
+    ]
+    ascending = [True, False] + [
+        False if column in {"pident", "min_coverage"} else True
+        for column in tie_columns
     ]
     return (
-        data.sort_values(["evalue", "bitscore"], ascending=[True, False])
+        data.sort_values(
+            ["evalue", "bitscore", *tie_columns],
+            ascending=ascending,
+        )
         .drop_duplicates("pair", keep="first")
         .reset_index(drop=True)
     )
@@ -230,9 +264,11 @@ def whole_fold_edges(
                 "evalue",
             ]
         )
-    data["pair"] = [
-        tuple(sorted((query, target))) for query, target in zip(data.q, data.t)
-    ]
+    data = _canonicalize_pair_direction(
+        data,
+        swaps=(("qtmscore", "ttmscore"), ("qcov", "tcov")),
+    )
+    data["pair"] = list(zip(data.q, data.t))
     numeric = [
         "tm",
         "qtmscore",
@@ -248,9 +284,18 @@ def whole_fold_edges(
         data[column] = pd.to_numeric(data[column], errors="coerce")
     data["evalue"] = pd.to_numeric(data["evalue"], errors="coerce")
     best = data.sort_values(
-        ["tm", "min_coverage", "evalue"], ascending=[False, False, True]
-    ).groupby("pair", as_index=False).first()
-    best[["q", "t"]] = pd.DataFrame(best.pair.tolist(), index=best.index)
+        [
+            "tm",
+            "min_coverage",
+            "evalue",
+            "lddt",
+            "fident",
+            "alnlen",
+            "q",
+            "t",
+        ],
+        ascending=[False, False, True, False, False, False, True, True],
+    ).drop_duplicates("pair", keep="first").reset_index(drop=True)
     return best[
         [
             "q",
