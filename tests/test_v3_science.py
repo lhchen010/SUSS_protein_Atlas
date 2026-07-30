@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import pandas as pd
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,9 +18,30 @@ from v3_utils import (
     foldmason_column_scores,
     merge_intervals,
     relationship_components,
+    select_structural_hub,
     select_blast_relationships,
     whole_fold_edges,
 )
+
+
+def test_structural_hub_prefers_measured_coverage_then_mean_tm():
+    pairs = pd.DataFrame(
+        [
+            {"q": "A", "t": "B", "tm": 0.9},
+            {"q": "A", "t": "C", "tm": 0.8},
+            {"q": "B", "t": "C", "tm": 0.7},
+            {"q": "B", "t": "D", "tm": 0.6},
+        ]
+    )
+
+    hub = select_structural_hub(["A", "B", "C", "D"], pairs)
+
+    assert hub == {
+        "member": "B",
+        "mean_tm": pytest.approx(0.7333333333),
+        "measured_pairs": 3,
+        "expected_pairs": 3,
+    }
 
 
 def test_whole_fold_edges_require_tm_and_reciprocal_coverage():

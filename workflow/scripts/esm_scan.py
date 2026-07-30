@@ -8,11 +8,12 @@ represented in a D family.
 ``all_proteins`` is available for users who explicitly accept its much higher
 masked-marginals cost.
 """
-import os, glob, re, shutil, subprocess
+import os, glob, shutil, subprocess
 import json
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from runtime_utils import resolve_executable, resolve_file
+from v3_utils import protein_id
 
 seqs_fa = snakemake.input.seqs
 members_csv = snakemake.input.members
@@ -36,16 +37,13 @@ for line in open(seqs_fa, encoding="utf-8", errors="replace"):
     line = line.strip()
     if line.startswith(">"): name = line[1:].split()[0]; seqs[name] = ""
     elif name: seqs[name] += line
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-def acc_of(s):
-    m = accre.search(s); return m.group(0) if m else s
-
 # Full-family aliases preserve the existing family-reference contract.
 family_refs = {}
 for ff in sorted(glob.glob(os.path.join(family_member_dir, "*.members.txt"))):
     fam = os.path.basename(ff).split(".")[0]
-    m = accre.search(open(ff).readline())
-    if m: family_refs[fam] = m.group(0)
+    ref = protein_id(open(ff).readline().strip())
+    if ref:
+        family_refs[fam] = ref
 members = pd.read_csv(members_csv)
 singletons = set(
     members.loc[members.family == "singleton", "acc"].astype(str)
@@ -96,7 +94,7 @@ else:
         f"domain_members, or all_proteins, got {scope}"
     )
 
-seq_by_acc = {acc_of(k): v for k, v in seqs.items()}
+seq_by_acc = {protein_id(k): v for k, v in seqs.items()}
 outdir = os.path.join(os.path.dirname(out_csv), "esm_out"); os.makedirs(outdir, exist_ok=True)
 workers = max(1, int(snakemake.params.get("workers", 1)))
 
