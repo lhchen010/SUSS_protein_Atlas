@@ -34,6 +34,7 @@ domain_clustering:
   sensitivity: 9.5
   min_probability: 0.5
   min_lddt: 0.5
+  borderline_lddt_margin: 0.05
   min_alntm: 0.0
   min_aligned_residues: 40
   min_shorter_coverage: 0.0

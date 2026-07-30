@@ -28,6 +28,7 @@ signals.esm_scope=family_representatives, esm_workers=1
 | 3 | cluster | Foldseek TSV + qc.csv | families.csv, members.csv, edges.csv, family_members/ | igraph + Leiden | foldseek_tm, reciprocal coverage, tm_symmetric, resolution, min size | all |
 | 4 | foldseek_domains | QC-passing PDB | foldseek_domains.tsv | Foldseek easy-search, local 3Di+AA | e-value, sensitivity | all |
 | 5 | domain_cluster | local Foldseek TSV | domain_families/members/edges/cross_edges.csv | interval consolidation + Leiden | probability, aligned length, local lDDT, optional alignment TM/coverage | all |
+| 5d | domain_diagnostics | local Foldseek TSV + F/D memberships | domain_match_diagnostics.csv | exact filter audit + best-hit ranking | D-family thresholds, diagnostic lDDT margin | all proteins |
 | 5a | domain_sequences | D members + canonical parent sequences | domain_segments.fasta, domain_sequence_manifest.csv | coordinate-aware extraction | retained D coordinates | D segments |
 | 5b | domain_blastp | domain_segments.fasta | domain_blastp_allvsall.tsv | BLASTp | e-value; downstream reciprocal segment coverage | D segments |
 | 6 | domain_workbench | D members/edges + domain BLAST + sequences/PDB | schema-4 domain_workbench.json, separate BLAST/FoldMason identity matrices, structural/sequence conservation | FoldMason + US-align + MAFFT + FastTree + Rate4Site + optional FoldTree | configured tools and minimum subgroup size | D families |

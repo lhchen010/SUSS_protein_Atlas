@@ -129,6 +129,25 @@ rule domain_cluster:
         min_size=config.get("domain_clustering", {}).get("min_family_size", 2)
     script: "scripts/domain_cluster.py"
 
+rule domain_diagnostics:
+    input:
+        hits=f"{RESULTS}/foldseek_domain_allvsall.tsv",
+        members=f"{RESULTS}/members.csv",
+        domain_members=f"{RESULTS}/domain_members.csv"
+    output:
+        csv=f"{RESULTS}/domain_match_diagnostics.csv"
+    params:
+        evalue=config.get("domain_clustering", {}).get("evalue", 0.001),
+        probability=config.get("domain_clustering", {}).get("min_probability", 0.5),
+        min_aligned=config.get("domain_clustering", {}).get("min_aligned_residues", 40),
+        min_coverage=config.get("domain_clustering", {}).get("min_shorter_coverage", 0.0),
+        min_lddt=config.get("domain_clustering", {}).get("min_lddt", 0.5),
+        min_alntm=config.get("domain_clustering", {}).get("min_alntm", 0.0),
+        borderline_lddt_margin=config.get("domain_clustering", {}).get(
+            "borderline_lddt_margin", 0.05
+        )
+    script: "scripts/domain_diagnostics.py"
+
 rule domain_sequences:
     input:
         members=f"{RESULTS}/domain_members.csv",
@@ -512,6 +531,7 @@ rule assemble:
             domain_bridges=f"{RESULTS}/domain_cross_edges.csv",
             domain_workbench=f"{RESULTS}/domain_workbench.json",
             domain_assets=f"{RESULTS}/domain_families",
+            domain_diagnostics=f"{RESULTS}/domain_match_diagnostics.csv",
             subgroups=f"{RESULTS}/sequence_subgroups.csv",
             structure_db=f"{RESULTS}/structure_db/atlas.complete.json",
             structure_index=f"{RESULTS}/structure_search_index.csv"
