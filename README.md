@@ -130,7 +130,16 @@ for workflow development:
 
 ## Interactive atlas search
 
-The combined atlas has four relationship views:
+The combined atlas presents two independent analysis axes instead of implying that all result
+types are mutually exclusive:
+
+- **Full-length analysis** contains global fold-defined `F` families and proteins that remain
+  full-length singletons.
+- **Domain analysis** contains local structural-domain `D` families and proteins with no
+  retained D-family match under the configured thresholds.
+
+A full-length singleton may still belong to a D family, and a member of an F family may have no
+retained D-family match. The two-level navigation preserves this relationship explicitly.
 
 - **Full-length families** searches and highlights global fold-defined `F` families.
 - **Domain families** provides a D-family overview network. Edges summarize retained local
@@ -153,7 +162,10 @@ Every F family exposes mature sequences, a FoldMason AA structural MSA, the corr
 MSA, and, when applicable, a MAFFT sequence MSA for the representative protein's S subgroup.
 Both F and D structure viewers support white/black backgrounds and
 cartoon/surface/stick/sphere/line representations. Structural conservation uses FoldMason's
-official per-column LDDT output. By default, a column is
+official per-column LDDT output. In D families, each FoldMason alignment-column score is mapped
+onto every aligned segment, not only the family hub; complete parent context remains visible in
+grey. Pocket mode likewise keeps the non-pocket scaffold visible in grey while highlighting
+pocket-lining residues. By default, a column is
 colored only when at least half of structure-pair subalignments support it; unsupported residues
 are grey rather than being interpreted as variable or conserved. Red is high structural
 conservation and blue is low structural conservation. Evolutionary conservation is reported
@@ -170,7 +182,7 @@ Foldseek database and maps each hit directly to its F family or singleton, D-fam
 and S subgroup. Result accessions and family identifiers link directly back to the corresponding
 atlas workbench.
 
-All three views search locally without a server round trip. Plain text matches accessions, annotations,
+All atlas views search locally without a server round trip. Plain text matches accessions, annotations,
 InterPro/Pfam terms, Foldseek PDB100 and AFDB/Swiss-Prot hits, EffectorP calls, DeepTMHMM results,
 novelty, pockets, and expression. Field prefixes are available for precise queries:
 
@@ -284,6 +296,7 @@ unless all required evidence is complete.
 | [examples/EXPECTED.md](examples/EXPECTED.md) | Reproducible 100-protein acceptance baseline |
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
 | [docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md) | v4.1 pocket correctness, RNA-seq repair, selectable domain superposition, deployment evidence, and Claude acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md) | v5.0.2 viewer hierarchy, all-segment structural conservation, two-axis navigation, and acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses
