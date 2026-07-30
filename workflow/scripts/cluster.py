@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import igraph as ig
 import leidenalg
-from v3_utils import whole_fold_edges
+from v3_utils import select_structural_hub, whole_fold_edges
 
 tsv      = snakemake.input.tsv
 qc_csv   = snakemake.input.qc
@@ -27,15 +27,6 @@ MIN_SIZE = int(snakemake.params.min_size)
 cols = ["query","target","alntmscore","qtmscore","ttmscore","lddt","fident",
         "alnlen","qlen","tlen","evalue","bits"]
 df = pd.read_csv(tsv, sep="\t", names=cols)
-# Foldseek names may carry either a strain prefix (cor_TDZ...) or an AF2 suffix
-# (TDZ..._unrelaxed_rank_...). Accession = the TDZ\d+\.\d+ token; fall back to basename.
-import re as _re
-def norm(s):
-    s = str(s).replace(".pdb", "")
-    m = _re.search(r"[A-Z]{2,3}\d{4,}\.\d+", s)   # GenBank-style accession
-    if m: return m.group(0)
-    parts = s.split("_")
-    return parts[1] if len(parts) == 2 else parts[0]
 edges = whole_fold_edges(
     df,
     tm_threshold=TM_THR,
@@ -101,8 +92,8 @@ keep.to_csv(out_edge, index=False)
 # so FoldMason MSA, rate4site -a, pocket ref, and hub marking all use the SAME protein.
 pdb_dir = snakemake.config["input"]["pdb_dir"]
 acc2fn = dict(zip(qc.acc, qc.fn)) if "fn" in qc.columns else {}
-# Hub scoring uses every available within-family Foldseek pair, including hits below
-# the clustering threshold. Missing pairs contribute zero, matching matrices.py.
+# Hub scoring uses every measured within-family Foldseek pair, including hits below
+# the clustering threshold. Missing pairs remain missing and never contribute zero.
 tm_pair = all_pair_edges[
     all_pair_edges.q.isin(all_nodes) & all_pair_edges.t.isin(all_nodes)
 ].copy()
@@ -110,15 +101,8 @@ for fid in fam_sizes.index:
     famname = fam_rank[fid]; accs = comm[comm.community == fid].acc.tolist()
     aset = set(accs)
     sub = tm_pair[tm_pair.q.isin(aset) & tm_pair.t.isin(aset)]
-    if len(accs) > 1:
-        meantm = {
-            a: float(sub.loc[(sub.q == a) | (sub.t == a), "tm"].sum())
-            / (len(accs) - 1)
-            for a in accs
-        }
-        hub = max(sorted(accs), key=lambda a: meantm[a])
-    else:
-        hub = accs[0]
+    hub_record = select_structural_hub(accs, sub)
+    hub = str(hub_record["member"])
     ordered = [hub] + [a for a in accs if a != hub]
     with open(os.path.join(famdir, f"{famname}.members.txt"), "w") as fh:
         for a in ordered:

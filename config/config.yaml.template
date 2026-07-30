@@ -28,6 +28,7 @@ clustering:
   alignment_type: 1               # global TM-align for full-length families
   exhaustive_search: true         # accurate for a small atlas; false for large discovery sets
   search_evalue: inf              # TM/coverage below decide accepted whole-fold edges
+  max_seqs: 100000                # prevent per-query hit truncation in all-vs-all atlases
   leiden_resolution: 1.0          # standard starting point
   leiden_seed: 42
   min_family_size: 2              # 2-3 member families are flagged "n small" on the card

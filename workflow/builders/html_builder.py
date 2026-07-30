@@ -1445,17 +1445,31 @@ def _xlsx_b64(fam, members, annotation, tm, usm, idm, blast_pairs, sig, exp,
 
 
 def _hub_from_tm(tm, labels):
-    """Hub = member with highest mean off-diagonal TM ('most like everyone')."""
+    """Select the best-covered member, then highest mean measured off-diagonal TM."""
     try:
         M = np.array(tm.set_index(tm.columns[0]).values, dtype=float)
         n = M.shape[0]
         if n < 2:
-            return (labels[0] if labels else None), None
-        off = (M.sum(1) - np.diag(M)) / (n - 1)
-        i = int(np.argmax(off))
-        return labels[i], round(float(off[i]), 3)
+            return (labels[0] if labels else None), None, 0, 0
+        np.fill_diagonal(M, np.nan)
+        counts = np.isfinite(M).sum(axis=1)
+        means = np.asarray([
+            float(np.nanmean(row)) if np.isfinite(row).any() else np.nan
+            for row in M
+        ])
+        candidates = sorted(
+            range(n),
+            key=lambda index: (
+                -int(counts[index]),
+                -means[index] if math.isfinite(means[index]) else math.inf,
+                str(labels[index]),
+            ),
+        )
+        i = candidates[0]
+        mean = round(float(means[i]), 3) if math.isfinite(means[i]) else None
+        return labels[i], mean, int(counts[i]), n - 1
     except Exception:
-        return (labels[0] if labels else None), None
+        return (labels[0] if labels else None), None, 0, max(0, len(labels) - 1)
 
 
 def _matrix_pair_stats(table):
@@ -1466,6 +1480,8 @@ def _matrix_pair_stats(table):
         "maximum": None,
         "n_pairs": 0,
         "n_detected": 0,
+        "n_possible": 0,
+        "n_missing": 0,
     }
     if table is None or len(table) < 2:
         return empty
@@ -1475,8 +1491,9 @@ def _matrix_pair_stats(table):
         ).to_numpy(dtype=float)
         values = matrix[np.triu_indices(len(matrix), k=1)]
         values = values[np.isfinite(values)]
+        possible = len(matrix) * (len(matrix) - 1) // 2
         if not len(values):
-            return empty
+            return {**empty, "n_possible": possible, "n_missing": possible}
         detected = values[values > 0]
         return {
             "mean_all": round(float(values.mean()), 3),
@@ -1486,9 +1503,94 @@ def _matrix_pair_stats(table):
             "maximum": round(float(values.max()), 3),
             "n_pairs": int(len(values)),
             "n_detected": int(len(detected)),
+            "n_possible": possible,
+            "n_missing": int(possible - len(values)),
         }
     except Exception:
         return empty
+
+
+def _matrix_agreement_stats(foldseek, usalign, threshold=0.1):
+    """Compare only pairs measured by both matrices; keep dense US-align mean."""
+    result = {
+        "usalign_mean": None,
+        "pearson_r": None,
+        "max_abs_diff": None,
+        "n_disagree": 0,
+        "n_compared": 0,
+    }
+    if foldseek is None or usalign is None:
+        return result
+    try:
+        fs = foldseek.set_index(foldseek.columns[0]).apply(
+            pd.to_numeric, errors="coerce"
+        )
+        us = usalign.set_index(usalign.columns[0]).apply(
+            pd.to_numeric, errors="coerce"
+        )
+        us_values = us.to_numpy(dtype=float)
+        us_upper = us_values[np.triu_indices(len(us_values), k=1)]
+        us_upper = us_upper[np.isfinite(us_upper)]
+        if len(us_upper):
+            result["usalign_mean"] = round(float(us_upper.mean()), 3)
+
+        shared = [
+            label
+            for label in fs.columns
+            if label in fs.index and label in us.columns and label in us.index
+        ]
+        if len(shared) < 2:
+            return result
+        indices = np.triu_indices(len(shared), k=1)
+        fs_values = fs.loc[shared, shared].to_numpy(dtype=float)[indices]
+        us_values = us.loc[shared, shared].to_numpy(dtype=float)[indices]
+        measured = np.isfinite(fs_values) & np.isfinite(us_values)
+        fs_values = fs_values[measured]
+        us_values = us_values[measured]
+        result["n_compared"] = int(len(fs_values))
+        if not len(fs_values):
+            return result
+        differences = np.abs(fs_values - us_values)
+        result["max_abs_diff"] = round(float(differences.max()), 3)
+        result["n_disagree"] = int((differences > threshold).sum())
+        if (
+            len(fs_values) >= 3
+            and np.std(fs_values) > 0
+            and np.std(us_values) > 0
+        ):
+            result["pearson_r"] = round(
+                float(np.corrcoef(fs_values, us_values)[0, 1]), 3
+            )
+        return result
+    except Exception:
+        return result
+
+
+def _site_correlations(signature, residue_values):
+    """Correlate site scores by residue identifier, never by row position."""
+    result = {"conservation": None, "sasa": None, "n_conservation": 0, "n_sasa": 0}
+    if signature is None or "resi" not in signature or not residue_values:
+        return result
+    table = signature.copy()
+    table["_site_value"] = pd.to_numeric(
+        table["resi"], errors="coerce"
+    ).map(residue_values)
+    for source, output in (("conservation", "conservation"), ("rel_sasa", "sasa")):
+        if source not in table:
+            continue
+        paired = table[[source, "_site_value"]].apply(
+            pd.to_numeric, errors="coerce"
+        ).dropna()
+        result[f"n_{output}"] = int(len(paired))
+        if (
+            len(paired) >= 3
+            and paired[source].std() > 0
+            and paired["_site_value"].std() > 0
+        ):
+            result[output] = float(
+                np.corrcoef(paired[source], paired["_site_value"])[0, 1]
+            )
+    return result
 
 
 def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
@@ -1740,26 +1842,20 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                                            vmin=0.3, vmax=1.0, unit="TM"))
         # US-align TM matrix — algorithm-independent cross-check of the Foldseek TM above
         usm = load_csv(os.path.join(fd, f"{fam}_TM_usalign.csv"))
-        tm_us_mean = tm_cons_r = tm_cons_maxdiff = None; tm_disagree = 0
+        tm_us_mean = tm_cons_r = tm_cons_maxdiff = None
+        tm_disagree = tm_cons_n_pairs = 0
         if usm is not None:
             ulabs = list(usm.iloc[:, 0].astype(str))
             UM = usm.set_index(usm.columns[0]).values.tolist()
             assets["tmus_svg"] = _svg_datauri(_svg_matrix(UM, [l[:11] for l in ulabs],
                                            f"{fam} · Structural similarity (US-align TM, independent)",
                                            vmin=0.3, vmax=1.0, unit="TM"))
-            # Foldseek vs US-align consistency on the shared off-diagonal pairs
-            if tm is not None:
-                fsq = tm.set_index(tm.columns[0]); usq = usm.set_index(usm.columns[0])
-                shared = [c for c in fsq.columns if c in usq.columns and c in fsq.index and c in usq.index]
-                if len(shared) >= 2:
-                    fa = fsq.loc[shared, shared].values; ua = usq.loc[shared, shared].values
-                    iu = np.triu_indices(len(shared), k=1)
-                    av, bv = fa[iu].astype(float), ua[iu].astype(float)
-                    if len(av) >= 2 and np.std(av) > 0 and np.std(bv) > 0:
-                        tm_cons_r = round(float(np.corrcoef(av, bv)[0, 1]), 3)
-                    tm_us_mean = round(float(bv.mean()), 3)
-                    tm_cons_maxdiff = round(float(np.abs(av - bv).max()), 3)
-                    tm_disagree = int((np.abs(av - bv) > 0.1).sum())
+            agreement = _matrix_agreement_stats(tm, usm)
+            tm_us_mean = agreement["usalign_mean"]
+            tm_cons_r = agreement["pearson_r"]
+            tm_cons_maxdiff = agreement["max_abs_diff"]
+            tm_disagree = agreement["n_disagree"]
+            tm_cons_n_pairs = agreement["n_compared"]
         if idm is not None:
             labs = list(idm.iloc[:, 0].astype(str))
             M = idm.set_index(idm.columns[0]).values.tolist()
@@ -1783,7 +1879,11 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 sequence_status = {}
         # hub = highest mean-TM member (mark on FoldTree); ref_used = first member (analysis ref)
         tm_labels = list(tm.iloc[:, 0].astype(str)) if tm is not None else members
-        hub, hub_meanTM = _hub_from_tm(tm, tm_labels) if tm is not None else (members[0] if members else None, None)
+        hub, hub_meanTM, hub_pairs_measured, hub_pairs_expected = (
+            _hub_from_tm(tm, tm_labels)
+            if tm is not None
+            else (members[0] if members else None, None, 0, max(0, len(members) - 1))
+        )
         # FoldTree Newick outputs. The configured foldtree metric remains the interactive
         # tree; every available metric is retained in the family workbook.
         newick = ""
@@ -1820,6 +1920,8 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             ref_used=members[0] if members else "",
             hub=hub,
             hub_meanTM=hub_meanTM,
+            hub_pairs_measured=hub_pairs_measured,
+            hub_pairs_expected=hub_pairs_expected,
             foldseek_tm_all_pairs=tm_stats,
             blast_identity_all_pairs=id_stats,
             mean_retained_edge_TM=retained_tm,
@@ -1878,12 +1980,17 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             ex["tm_cons_r"] = tm_cons_r
             ex["tm_cons_maxdiff"] = tm_cons_maxdiff
             ex["tm_disagree"] = tm_disagree
+            ex["tm_cons_n_pairs"] = tm_cons_n_pairs
         if sig is not None and "conservation" in sig:
             cons = sig["conservation"].dropna()
             sub = sig.dropna(subset=["rel_sasa", "conservation"]) if {"rel_sasa","conservation"}.issubset(sig.columns) else sig.iloc[0:0]
             if len(cons):
                 ex["cons_min"] = float(cons.min())
                 ex["cons_max"] = float(cons.max())
+                ex["sequence_scored_resi"] = [
+                    int(value)
+                    for value in sig.loc[sig.conservation.notna(), "resi"]
+                ]
             ex["cons_sasa_r"] = float(np.corrcoef(sub.conservation, sub.rel_sasa)[0, 1]) if len(sub) > 2 else None
         # pockets: prefer P2Rank, keep both sources so the viewer can switch (add_p2rank_esmscan).
         # CRITICAL: the renderer's buildStructPane reads ex.fpocket_resi.length /
@@ -1921,29 +2028,21 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             ef = esm_all[esm_all.family == fam]
             aa_cols = [c for c in ef.columns if len(str(c)) == 1 and str(c).isalpha()]
             if len(ef) and aa_cols:
-                mean_llr = ef[aa_cols].mean(axis=1).values
-                ex["has_esm"] = True
-                ex["esm_min"] = float(np.nanmin(mean_llr)); ex["esm_max"] = float(np.nanmax(mean_llr))
-                # record ESM ref + per-residue tolerance so REFPDB["<fam>_esm"] can be built
-                poscol = next((c for c in ef.columns if str(c).lower() in ("", "unnamed: 0", "pos", "site")), ef.columns[0])
-                pos = ef[poscol].astype(str).str.extract(r"(\d+)$")[0].astype(float)
-                erf = str(ef["ref"].iloc[0]) if "ref" in ef.columns else None
-                if erf:
-                    esm_by_fam[fam] = {"ref": erf,
-                                       "tol": {int(p): float(v) for p, v in zip(pos, mean_llr) if not np.isnan(p)}}
-                if sig is not None and "conservation" in sig:
-                    n = min(len(mean_llr), len(sig))
-                    if n > 2:
-                        cc = sig["conservation"].values[:n]
-                        ss = sig["rel_sasa"].values[:n] if "rel_sasa" in sig else None
-                        m2 = mean_llr[:n]
-                        good = ~np.isnan(cc) & ~np.isnan(m2)
-                        if good.sum() > 2:
-                            ex["esm_vs_cons_r"] = float(np.corrcoef(cc[good], m2[good])[0, 1])
-                        if ss is not None:
-                            g2 = ~np.isnan(ss) & ~np.isnan(m2)
-                            if g2.sum() > 2:
-                                ex["esm_vs_sasa_r"] = float(np.corrcoef(ss[g2], m2[g2])[0, 1])
+                tolerance = _esm_tolerance(esm_all, fam)
+                mean_llr = np.asarray(list(tolerance.values()), dtype=float)
+                ex["has_esm"] = bool(len(mean_llr))
+                if len(mean_llr):
+                    ex["esm_min"] = float(np.nanmin(mean_llr))
+                    ex["esm_max"] = float(np.nanmax(mean_llr))
+                    # Record the same residue-indexed values used for correlations.
+                    erf = str(ef["ref"].iloc[0]) if "ref" in ef.columns else None
+                    if erf:
+                        esm_by_fam[fam] = {"ref": erf, "tol": tolerance}
+                    site_stats = _site_correlations(sig, tolerance)
+                    ex["esm_vs_cons_r"] = site_stats["conservation"]
+                    ex["esm_vs_sasa_r"] = site_stats["sasa"]
+                    ex["esm_vs_cons_n"] = site_stats["n_conservation"]
+                    ex["esm_vs_sasa_n"] = site_stats["n_sasa"]
             else:
                 ex["has_esm"] = False
         else:
@@ -1960,7 +2059,13 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
         EXTRA[fam] = ex
         # conservation-colored ref PDB
         cons_pdb = os.path.join(fd, f"{fam}_conservation.pdb")
-        if os.path.exists(cons_pdb):
+        if (
+            os.path.exists(cons_pdb)
+            and os.path.getsize(cons_pdb) > 0
+            and ex.get("sequence_scored_resi")
+            and ex.get("cons_min") is not None
+            and ex.get("cons_max") is not None
+        ):
             store_reference(
                 f"{fam}_cons",
                 open(cons_pdb, encoding="utf-8", errors="replace").read(),

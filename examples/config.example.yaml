@@ -24,6 +24,7 @@ clustering:
   alignment_type: 1
   exhaustive_search: true
   search_evalue: inf
+  max_seqs: 100000
   leiden_resolution: 1.0
   leiden_seed: 42
   min_family_size: 2

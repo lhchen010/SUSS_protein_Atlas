@@ -14,6 +14,7 @@ This layer asks whether two complete proteins share a comparable overall fold.
 | `clustering.tm_symmetric` | `min` | Combine query- and target-normalized TM scores conservatively |
 | `clustering.whole_fold_min_coverage` | `0.5` | Both proteins must align over at least half their length |
 | `clustering.exhaustive_search` | `true` | Accurate all-vs-all search for atlas-scale datasets |
+| `clustering.max_seqs` | `100000` | Prevent per-query hit truncation before within-family matrices are assembled |
 | `clustering.leiden_resolution` | `1.0` | Community granularity after structural edges are accepted |
 
 The default edge is:

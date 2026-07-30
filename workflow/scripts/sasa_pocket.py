@@ -6,32 +6,35 @@ instead of rerunning a surface method on cropped domain coordinates.
 FreeSASA runs in the workflow environment; P2Rank may use a separate Java
 environment. Emits sasa_all.csv + pockets.json.
 """
-import os, glob, re, json, shutil, subprocess
+import os, glob, json, re, shutil, subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np, pandas as pd
 import freesasa
 from runtime_utils import resolve_executable
+from v3_utils import protein_id
 freesasa.setVerbosity(freesasa.silent)
 
 pdb_dir  = snakemake.input.pdb_dir
 qc_csv   = snakemake.input.qc
 out_sasa = snakemake.output.sasa
 out_pock = snakemake.output.pockets
+p2rank_manifest = snakemake.output.p2rank_manifest
+fpocket_manifest = snakemake.output.fpocket_manifest
+p2rank_root = os.path.join(os.path.dirname(out_sasa), "p2rank")
+fpocket_root = os.path.join(os.path.dirname(out_sasa), "fpocket")
 p2rank   = snakemake.params.p2rank
 p2rank_profile = str(snakemake.params.p2rank_profile or "").strip().lower()
 fpocket  = snakemake.params.fpocket
 java_env = snakemake.params.java_env
 enabled  = bool(snakemake.params.enabled)
+os.makedirs(p2rank_root, exist_ok=True)
+os.makedirs(fpocket_root, exist_ok=True)
 
 MAXASA = {'A':129.,'R':274.,'N':195.,'D':193.,'C':167.,'E':223.,'Q':225.,'G':104.,'H':224.,
           'I':197.,'L':201.,'K':236.,'M':224.,'F':240.,'P':159.,'S':155.,'T':172.,'W':285.,'Y':263.,'V':174.}
 T2O = {'ALA':'A','ARG':'R','ASN':'N','ASP':'D','CYS':'C','GLU':'E','GLN':'Q','GLY':'G','HIS':'H','ILE':'I',
        'LEU':'L','LYS':'K','MET':'M','PHE':'F','PRO':'P','SER':'S','THR':'T','TRP':'W','TYR':'Y','VAL':'V'}
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-def acc_of(fn): 
-    m = accre.search(os.path.basename(fn)); return m.group(0) if m else os.path.basename(fn)[:-4]
-
-acc2pdb = {acc_of(p): p for p in glob.glob(os.path.join(pdb_dir, "*.pdb"))}
+acc2pdb = {protein_id(p): p for p in glob.glob(os.path.join(pdb_dir, "*.pdb"))}
 qc = pd.read_csv(qc_csv); keep = set(qc[qc["pass"]].acc) if "pass" in qc.columns else set(qc.acc)
 
 rows = []
@@ -65,8 +68,7 @@ if os.path.isfile(out_pock):
 family_refs = {}
 for ff in sorted(glob.glob(os.path.join(famdir, "*.members.txt"))):
     fam = os.path.basename(ff).split(".")[0]
-    m = accre.search(open(ff).readline())
-    ref = m.group(0) if m else None
+    ref = protein_id(open(ff).readline().strip())
     if ref:
         family_refs[fam] = ref
 targets = sorted(keep)
@@ -74,8 +76,8 @@ ref_storage = {
     ref: family
     for family, ref in family_refs.items()
     if (
-        os.path.isdir(os.path.join(os.path.dirname(out_sasa), "p2rank", family))
-        or os.path.isdir(os.path.join(os.path.dirname(out_sasa), "fpocket", family))
+        os.path.isdir(os.path.join(p2rank_root, family))
+        or os.path.isdir(os.path.join(fpocket_root, family))
     )
 }
 cached_profiles = {}
@@ -108,7 +110,7 @@ def predict_pockets(ref):
         return ref, entry
     # P2Rank
     if P2RANK:
-        wd = os.path.join(os.path.dirname(out_sasa), "p2rank", storage_key)
+        wd = os.path.join(p2rank_root, storage_key)
         out_dir = os.path.join(wd, "out")
         profile_marker = os.path.join(wd, "profile.txt")
         os.makedirs(wd, exist_ok=True)
@@ -184,7 +186,7 @@ def predict_pockets(ref):
             }
     # fpocket (local only)
     if FPOCKET:
-        fwd = os.path.join(os.path.dirname(out_sasa), "fpocket", storage_key); os.makedirs(fwd, exist_ok=True)
+        fwd = os.path.join(fpocket_root, storage_key); os.makedirs(fwd, exist_ok=True)
         existing_info = sorted(glob.glob(os.path.join(fwd, "*_out", "*_info.txt")))
         if existing_info:
             info = existing_info[0]
@@ -239,6 +241,26 @@ for family, ref in family_refs.items():
     if ref in pockets:
         pockets[family] = dict(pockets[ref])
 json.dump(pockets, open(out_pock, "w"))
+for root, manifest, method in (
+    (p2rank_root, p2rank_manifest, "p2rank"),
+    (fpocket_root, fpocket_manifest, "fpocket"),
+):
+    files = sorted(
+        os.path.relpath(path, root)
+        for path in glob.glob(os.path.join(root, "**"), recursive=True)
+        if os.path.isfile(path)
+    )
+    with open(manifest, "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "method": method,
+                "status": "complete" if enabled else "not_run",
+                "root": os.path.basename(root),
+                "n_files": len(files),
+                "files": files,
+            },
+            handle,
+        )
 singletons = int((members.family == "singleton").sum())
 complete = len([
     accession for accession in targets

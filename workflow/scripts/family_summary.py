@@ -11,7 +11,9 @@ master_csv = snakemake.input.master
 members_csv = snakemake.input.members
 anno_csv = snakemake.input.annotation
 pockets_json = snakemake.input.pockets
-out_xlsx = snakemake.output[0]
+out_xlsx = snakemake.output.xlsx
+out_clustered = snakemake.output.clustered
+out_singletons = snakemake.output.singletons
 
 mem = pd.read_csv(members_csv)                       # acc, family, community, deg, plddt, length
 master = pd.read_csv(master_csv)                     # family-level metrics
@@ -52,18 +54,19 @@ def pock_resis(fam, method):
     )
 
 def _usalign_stats(fam):
-    """mean US-align TM and Foldseek<->US-align consistency r for a family, or (None,None,0)."""
+    """US-align mean and Foldseek agreement over mutually measured pairs."""
     fd = os.path.join(os.path.dirname(members_csv), "families", fam)
     up = os.path.join(fd, f"{fam}_TM_usalign.csv")
     fp = os.path.join(fd, f"{fam}_TM.csv")
     if not os.path.exists(up):
-        return None, None, 0
+        return None, None, 0, 0
     try:
         us = pd.read_csv(up, index_col=0)
         iu = np.triu_indices(len(us), k=1)
         bv = us.values[iu].astype(float)
+        bv = bv[np.isfinite(bv)]
         us_mean = round(float(bv.mean()), 3) if len(bv) else None
-        r = None; disagree = 0
+        r = None; disagree = compared = 0
         if os.path.exists(fp):
             fs = pd.read_csv(fp, index_col=0)
             shared = [c for c in fs.columns if c in us.columns and c in fs.index and c in us.index]
@@ -72,12 +75,15 @@ def _usalign_stats(fam):
                 ua = us.loc[shared, shared].values.astype(float)
                 j = np.triu_indices(len(shared), k=1)
                 av, bb = fa[j], ua[j]
-                if len(av) >= 2 and np.std(av) > 0 and np.std(bb) > 0:
+                measured = np.isfinite(av) & np.isfinite(bb)
+                av, bb = av[measured], bb[measured]
+                compared = int(len(av))
+                if len(av) >= 3 and np.std(av) > 0 and np.std(bb) > 0:
                     r = round(float(np.corrcoef(av, bb)[0, 1]), 3)
                 disagree = int((np.abs(av - bb) > 0.1).sum())
-        return us_mean, r, disagree
+        return us_mean, r, disagree, compared
     except Exception:
-        return None, None, 0
+        return None, None, 0, 0
 
 def _matrix_stats(fam, suffix):
     """Explicit all-pair and detected-pair means for a family matrix."""
@@ -132,7 +138,11 @@ for fam, gmem in fam_groups:
         known_novel = g_anno.novel.dropna() if "novel" in g_anno else pd.Series(dtype=float)
         pct_novel = round(100 * known_novel.mean(), 1) if len(known_novel) else np.nan
         # US-align independent TM cross-check (real families only; singletons have no pairs)
-        _us_mean, _us_r, _us_disagree = (_usalign_stats(label_fam) if not is_single else (None, None, 0))
+        _us_mean, _us_r, _us_disagree, _us_compared = (
+            _usalign_stats(label_fam)
+            if not is_single
+            else (None, None, 0, 0)
+        )
         _fs_all, _fs_detected, _fs_max, _fs_pairs, _fs_hits = (
             _matrix_stats(label_fam, "TM")
             if not is_single
@@ -168,6 +178,7 @@ for fam, gmem in fam_groups:
             ),
             mean_TM_usalign=_us_mean,
             tm_foldseek_usalign_r=_us_r,
+            tm_pairs_compared=_us_compared,
             tm_pairs_disagree=_us_disagree,
             blast_identity_all_pairs=_bl_all,
             blast_identity_detected_pairs=_bl_detected,
@@ -209,11 +220,12 @@ with pd.ExcelWriter(out_xlsx, engine="openpyxl") as xw:
         ("top_pfam / top_pfam_pct", "most common Pfam domain and % of members carrying it"),
         ("top_pdb_fold / top_pdb_pct", "most common Foldseek PDB100 hit and % of members"),
         ("top_protein_name", "most common AFDB-SwissProt protein name (real name, not accession)"),
-        ("foldseek_TM_all_pairs", "mean Foldseek TM across every unique within-family protein pair; missing hits are zero"),
+        ("foldseek_TM_all_pairs", "mean Foldseek TM across measured unique within-family pairs; missing hits remain NA"),
         ("foldseek_TM_detected_pairs", "mean Foldseek TM among pairs with a reported Foldseek hit"),
         ("mean_retained_edge_TM", "mean Foldseek TM among graph edges retained by the clustering thresholds"),
         ("mean_TM_usalign", "mean pairwise US-align TM within the cluster — algorithm-independent cross-check of Foldseek TM"),
-        ("tm_foldseek_usalign_r", "Pearson r between Foldseek and US-align TM over the cluster's pairs (high = robust clustering)"),
+        ("tm_foldseek_usalign_r", "Pearson r between Foldseek and US-align TM over mutually measured pairs (high = robust clustering)"),
+        ("tm_pairs_compared", "number of mutually measured Foldseek/US-align pairs used for agreement statistics"),
         ("tm_pairs_disagree", "number of within-cluster pairs where |Foldseek TM − US-align TM| > 0.1"),
         ("blast_identity_all_pairs", "mean best-HSP BLASTp identity across all unique protein pairs; undetected pairs are zero"),
         ("blast_identity_detected_pairs / max_blast_identity", "mean / max best-HSP BLASTp identity among detected pairs"),
@@ -237,10 +249,9 @@ with pd.ExcelWriter(out_xlsx, engine="openpyxl") as xw:
     clustered.to_excel(xw, sheet_name="clustered", index=False)
     singles.to_excel(xw, sheet_name="singletons", index=False)
 
-# also emit the two split CSVs next to the xlsx so the atlas can embed them as downloads
-outdir = os.path.dirname(out_xlsx)
-df[~df.is_singleton].to_csv(os.path.join(outdir, "family_summary_clustered.csv"), index=False)
-df[df.is_singleton].to_csv(os.path.join(outdir, "family_summary_singletons.csv"), index=False)
+# Declared split outputs let Snakemake track the atlas download dependencies.
+df[~df.is_singleton].to_csv(out_clustered, index=False)
+df[df.is_singleton].to_csv(out_singletons, index=False)
 
 print(f"family_summary: {len(df)} rows ({(~df.is_singleton).sum()} clustered + "
       f"{df.is_singleton.sum()} singletons), rnaseq_cols={len(cond_cols)} -> {out_xlsx}")

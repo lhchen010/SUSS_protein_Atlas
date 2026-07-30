@@ -1,10 +1,14 @@
-"""matrices rule — per-family TM and sequence-identity square matrices, from the
-whole-set foldseek TSV (configured symmetric TM) and blastp TSV (pident). Written
-as labeled CSVs {fam}_TM.csv / {fam}_ID.csv that cards.py and html_builder consume.
-Diagonal = 1.0; missing pairs = 0 (TM) / 0 (identity)."""
-import os, re
+"""Build per-family Foldseek TM and BLAST identity matrices.
+
+The TM matrix uses NA for a pair that Foldseek did not report. A missing
+measurement is not evidence for TM=0. BLAST keeps zero for an undetected HSP
+because that matrix represents detected sequence relationships rather than a
+global pairwise identity measurement.
+"""
+import os
 import numpy as np, pandas as pd
 from runtime_utils import symmetric_tm
+from v3_utils import protein_id
 
 fs_tsv   = snakemake.input.foldseek
 bl_tsv   = snakemake.input.blastp
@@ -14,24 +18,22 @@ out_id   = snakemake.output.idm
 fam      = snakemake.wildcards.fam
 sym_mode = snakemake.params.sym
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-def acc_of(s):
-    m = accre.search(str(s)); return m.group(0) if m else str(s)
-
-members = [acc_of(l) for l in open(famfile) if l.strip()]
+members = [protein_id(l.strip()) for l in open(famfile) if l.strip()]
 members = list(dict.fromkeys(members))  # unique, keep order (member[0] = ref)
 mset = set(members)
 
 # --- TM from foldseek ---
 fc = ["q","t","alntm","qtm","ttm","lddt","fident","aln","ql","tl","e","b"]
 fs = pd.read_csv(fs_tsv, sep="\t", names=fc)
-fs["qa"] = fs.q.map(acc_of); fs["ta"] = fs.t.map(acc_of)
+fs["qa"] = fs.q.map(protein_id); fs["ta"] = fs.t.map(protein_id)
 fs = fs[fs.qa.isin(mset) & fs.ta.isin(mset)].copy()
 fs["tm"] = [symmetric_tm(q, t, sym_mode) for q, t in zip(fs.qtm, fs.ttm)]
-TM = pd.DataFrame(0.0, index=members, columns=members)
+TM = pd.DataFrame(np.nan, index=members, columns=members)
 for _, r in fs.iterrows():
-    TM.loc[r.qa, r.ta] = max(TM.loc[r.qa, r.ta], r.tm)
-    TM.loc[r.ta, r.qa] = TM.loc[r.qa, r.ta]
+    current = TM.loc[r.qa, r.ta]
+    value = r.tm if pd.isna(current) else max(float(current), r.tm)
+    TM.loc[r.qa, r.ta] = value
+    TM.loc[r.ta, r.qa] = value
 for m in members:
     TM.loc[m, m] = 1.0
 
@@ -40,7 +42,7 @@ ID = pd.DataFrame(0.0, index=members, columns=members)
 if os.path.exists(bl_tsv) and os.path.getsize(bl_tsv) > 0:
     bc = ["q","t","pident","length","evalue","bitscore","qlen","slen"]
     bl = pd.read_csv(bl_tsv, sep="\t", names=bc)
-    bl["qa"] = bl.q.map(acc_of); bl["ta"] = bl.t.map(acc_of)
+    bl["qa"] = bl.q.map(protein_id); bl["ta"] = bl.t.map(protein_id)
     bl = bl[bl.qa.isin(mset) & bl.ta.isin(mset)]
     for _, r in bl.iterrows():
         v = r.pident / 100.0

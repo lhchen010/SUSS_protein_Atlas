@@ -15,6 +15,7 @@ Missing tools, structures, failed commands, and incomplete pair output block the
 import os, re, glob, subprocess, tempfile, shutil
 import numpy as np, pandas as pd
 from runtime_utils import resolve_executable, symmetric_tm
+from v3_utils import protein_id
 
 famfile  = snakemake.input.famfile
 pdb_dir  = snakemake.input.pdb_dir
@@ -24,11 +25,7 @@ usalign  = snakemake.params.usalign          # absolute path to USalign binary
 strain   = snakemake.params.get("code", "")  # filename prefix <code>_<acc>.pdb
 sym_mode = snakemake.params.sym
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-def acc_of(s):
-    m = accre.search(str(s)); return m.group(0) if m else str(s)
-
-members = [acc_of(l) for l in open(famfile) if l.strip()]
+members = [protein_id(l.strip()) for l in open(famfile) if l.strip()]
 members = list(dict.fromkeys(members))        # unique, keep order (member[0] = ref)
 
 # resolve each member to a real PDB file (try <code>_<acc>.pdb, then *<acc>*.pdb)

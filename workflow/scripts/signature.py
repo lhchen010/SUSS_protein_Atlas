@@ -1,6 +1,7 @@
 """Merge sequence evolution, structural conservation, and SASA on the family hub."""
 import json, os, re
 import numpy as np, pandas as pd
+from v3_utils import protein_id
 
 r4s_path = snakemake.input.r4s
 structural_path = snakemake.input.structural
@@ -20,8 +21,7 @@ if os.path.exists(ref_path):
     ref = open(ref_path).read().strip() or None
 if ref is None:
     if os.path.exists(famfile):
-        m = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", os.path.basename(open(famfile).readline().strip()))
-        ref = m.group(0) if m else None
+        ref = protein_id(open(famfile).readline().strip())
 
 def read_r4s(path):
     rows = []
@@ -73,7 +73,8 @@ m.to_csv(out_csv, index=False)
 
 # conservation-colored reference PDB: write conservation into the B-factor column so the
 # viewer (3Dmol) can color by conservation. resi -> conservation from the signature.
-if out_pdb and pdb_dir and ref:
+valid_sequence = m.dropna(subset=["sequence_conservation"])
+if out_pdb and pdb_dir and ref and len(valid_sequence):
     import glob
     cons_by_resi = dict(zip(m.resi, m.sequence_conservation))
     cand = ([os.path.join(pdb_dir, f"{strain}_{ref}.pdb")] if strain else []) + \
@@ -85,13 +86,17 @@ if out_pdb and pdb_dir and ref:
             if line.startswith(("ATOM", "HETATM")) and len(line) >= 66:
                 try: ri = int(line[22:26])
                 except ValueError: out_lines.append(line); continue
-                b = cons_by_resi.get(ri, 0.0)
+                b = cons_by_resi.get(ri, -1.0)
+                if not np.isfinite(b):
+                    b = -1.0
                 out_lines.append(f"{line[:60]}{b:6.2f}{line[66:]}")
             else:
                 out_lines.append(line)
         with open(out_pdb, "w") as fh: fh.writelines(out_lines)
     else:
         open(out_pdb, "w").write("")   # empty placeholder so the output exists
+elif out_pdb:
+    open(out_pdb, "w").write("")
 print(f"{fam} signature: ref={ref} n_aligned={len(m)} aa_match={aa_match:.3f} "
       f"cons_sasa_r={r:.3f} (n_valid={len(valid)}, "
       f"rate4site={status.get('rate4site_status', 'unknown')})")

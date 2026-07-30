@@ -10,7 +10,7 @@ Single-strain Snakemake engine rule-by-rule input/output/tool/config parameter s
 
 ## Config Parameters (config/config.yaml — lab default)
 ```
-clustering.foldseek_tm=0.5, tm_symmetric=min, leiden_resolution=1.0, min_family_size=2
+clustering.foldseek_tm=0.5, tm_symmetric=min, max_seqs=100000, leiden_resolution=1.0, min_family_size=2
 clustering.whole_fold_min_coverage=0.5
 domain_clustering.evalue=1e-3, min_probability=0.5, min_aligned_residues=40, min_lddt=0.5
 classification.blast_evalue=1e-3, min_reciprocal_coverage=0.5
@@ -24,7 +24,7 @@ signals.esm_scope=family_representatives, esm_workers=1
 | # | rule | Input | Output | Tool | config Parameter | Scope |
 |---|---|---|---|---|---|---|
 | 1 | qc | input_dir/*.pdb | qc.csv (acc,length,mean_plddt,frac_conf,pass) | custom (CA B-factor parsing) | min_plddt,max_length,min_length | all |
-| 2 | foldseek | QC-passing PDB | foldseek_allvsall.tsv | Foldseek easy-search, global alignment | alignment_type, exhaustive_search | all |
+| 2 | foldseek | QC-passing PDB | foldseek_allvsall.tsv | Foldseek easy-search, global alignment | alignment_type, exhaustive_search, max_seqs | all |
 | 3 | cluster | Foldseek TSV + qc.csv | families.csv, members.csv, edges.csv, family_members/ | igraph + Leiden | foldseek_tm, reciprocal coverage, tm_symmetric, resolution, min size | all |
 | 4 | foldseek_domains | QC-passing PDB | foldseek_domains.tsv | Foldseek easy-search, local 3Di+AA | e-value, sensitivity | all |
 | 5 | domain_cluster | local Foldseek TSV | domain_families/members/edges/cross_edges.csv | interval consolidation + Leiden | probability, aligned length, local lDDT, optional alignment TM/coverage | all |
@@ -37,13 +37,14 @@ signals.esm_scope=family_representatives, esm_workers=1
 | 9 | msa | F-family member PDB | {fam}.aln, {fam}.fasta | FoldMason | — | F families n≥2 |
 | 10 | structural_conservation | FoldMason AA/3Di MSA | structural_conservation.csv/PDB | FoldMason msa2lddtjson | pair_threshold | F families n≥2 |
 | 11 | sequence_analysis | S subgroup sequences | MAFFT MSA, FastTree, Rate4Site, status | MAFFT + FastTree + Rate4Site | min subgroup size | eligible S subgroups |
-| 12 | sasa_pocket | per-protein PDB, members.csv | sasa_all.csv, pockets.json keyed by family or singleton accession | freesasa+fpocket+P2Rank (java17) | — | all proteins; pocket detection on family references and every singleton |
+| 12 | sasa_pocket | per-protein PDB, members.csv | sasa_all.csv, pockets.json, p2rank.complete.json, fpocket.complete.json; manifests enumerate raw detector trees | freesasa+fpocket+P2Rank (java17) | P2Rank profile | all proteins; pocket detection on family references and every singleton |
 | 13 | esm | canonical sequences, F/D memberships, D workbench | esm_all.csv keyed by accession plus F aliases | ESM-1b (esmscan.py) | esm_model, plm_strategy, esm_scope, esm_workers | F representatives, every Full singleton, and independent D hubs by default |
 | 14 | foldtree | family members PDB per family | {fam}_{metric}.nwk ×3 | FoldTree (snakemake pipeline) | foldtree_metrics | families n≥2 |
 | 15 | annotate | all protein PDB+seq (including singletons) | member_annotation.csv, cluster_annotation.csv | Foldseek (pdb100/afdb)+InterProScan+EffectorP+DeepTMHMM | — | all |
 | 16 | rnaseq | rnaseq.xlsx + members | {fam}_expression.csv | pandas (log2 CPM) | — | all (if data present) |
 | → | signature | r4s + sasa + pockets | {fam}_signature.csv, B-factor PDB | custom | — | families n≥2 |
 | → | cards | all upstream | co_card_{fam}.png | matplotlib | — | per-family |
+| → | family_summary | master + memberships + annotation + pockets + optional RNA-seq | family_summary.xlsx, family_summary_clustered.csv, family_summary_singletons.csv | pandas/openpyxl | — | F families and singletons |
 | → | structure_db | QC-passing PDB + F/D/S assignments | structure_db/atlas*, structure_search_index.csv | Foldseek createdb | — | all |
 | → | assemble | master, F/D/S assignments, domain workbench, annotation, pockets, optional ESM/RNA, family assets | atlas.html + optional downloads/ artifacts | custom | html_mode (single/backend) | F, D, and singleton workbenches |
 

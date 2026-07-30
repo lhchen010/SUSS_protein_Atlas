@@ -60,6 +60,63 @@ def _canonicalize_pair_direction(
     return output
 
 
+def select_structural_hub(
+    members: list[str],
+    pairs: pd.DataFrame,
+) -> dict[str, object]:
+    """Select a hub from measured pair scores without treating missing pairs as zero."""
+    ordered_members = list(dict.fromkeys(map(str, members)))
+    expected = max(0, len(ordered_members) - 1)
+    measured: dict[str, dict[str, float]] = {
+        member: {} for member in ordered_members
+    }
+    member_set = set(ordered_members)
+    if pairs is not None and {"q", "t", "tm"}.issubset(pairs.columns):
+        for row in pairs.itertuples():
+            left, right = str(row.q), str(row.t)
+            if left == right or left not in member_set or right not in member_set:
+                continue
+            try:
+                score = float(row.tm)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(score):
+                continue
+            measured[left][right] = max(score, measured[left].get(right, -math.inf))
+            measured[right][left] = max(score, measured[right].get(left, -math.inf))
+
+    records = []
+    for member in ordered_members:
+        scores = list(measured[member].values())
+        records.append(
+            {
+                "member": member,
+                "mean_tm": float(np.mean(scores)) if scores else math.nan,
+                "measured_pairs": len(scores),
+                "expected_pairs": expected,
+            }
+        )
+    if not records:
+        return {
+            "member": None,
+            "mean_tm": math.nan,
+            "measured_pairs": 0,
+            "expected_pairs": expected,
+        }
+    return min(
+        records,
+        key=lambda record: (
+            -int(record["measured_pairs"]),
+            -(
+                float(record["mean_tm"])
+                if math.isfinite(float(record["mean_tm"]))
+                else -math.inf
+            ),
+            str(record["member"]),
+        ),
+    )
+
+
 def select_blast_relationships(
     table: pd.DataFrame,
     *,

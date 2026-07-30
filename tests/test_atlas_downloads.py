@@ -35,7 +35,77 @@ def test_matrix_pair_stats_separate_all_pairs_from_detected_pairs():
         "maximum": 0.6,
         "n_pairs": 3,
         "n_detected": 2,
+        "n_possible": 3,
+        "n_missing": 0,
     }
+
+
+def test_matrix_stats_and_hub_do_not_zero_fill_missing_pairs():
+    matrix = pd.DataFrame(
+        {
+            "member": ["A", "B", "C"],
+            "A": [1.0, 0.8, np.nan],
+            "B": [0.8, 1.0, 0.7],
+            "C": [np.nan, 0.7, 1.0],
+        }
+    )
+
+    stats = html_builder._matrix_pair_stats(matrix)
+    hub, mean_tm, measured, expected = html_builder._hub_from_tm(
+        matrix, ["A", "B", "C"]
+    )
+
+    assert stats["mean_all"] == 0.75
+    assert stats["n_pairs"] == 2
+    assert stats["n_missing"] == 1
+    assert (hub, mean_tm, measured, expected) == ("B", 0.75, 2, 2)
+
+
+def test_matrix_agreement_uses_only_mutually_measured_pairs():
+    foldseek = pd.DataFrame(
+        {
+            "member": ["A", "B", "C", "D"],
+            "A": [1.0, 0.8, np.nan, 0.5],
+            "B": [0.8, 1.0, 0.7, np.nan],
+            "C": [np.nan, 0.7, 1.0, 0.6],
+            "D": [0.5, np.nan, 0.6, 1.0],
+        }
+    )
+    usalign = pd.DataFrame(
+        {
+            "member": ["A", "B", "C", "D"],
+            "A": [1.0, 0.82, 0.2, 0.52],
+            "B": [0.82, 1.0, 0.72, 0.3],
+            "C": [0.2, 0.72, 1.0, 0.62],
+            "D": [0.52, 0.3, 0.62, 1.0],
+        }
+    )
+
+    stats = html_builder._matrix_agreement_stats(foldseek, usalign)
+
+    assert stats["n_compared"] == 4
+    assert stats["pearson_r"] == 1.0
+    assert stats["max_abs_diff"] == 0.02
+    assert stats["n_disagree"] == 0
+    assert stats["usalign_mean"] == pytest.approx(0.53)
+
+
+def test_site_correlations_join_on_residue_number():
+    signature = pd.DataFrame(
+        {
+            "resi": [30, 10, 20],
+            "conservation": [3.0, 1.0, 2.0],
+            "rel_sasa": [0.1, 0.3, 0.2],
+        }
+    )
+
+    stats = html_builder._site_correlations(
+        signature, {10: -1.0, 20: -2.0, 30: -3.0}
+    )
+
+    assert stats["conservation"] == pytest.approx(-1.0)
+    assert stats["sasa"] == pytest.approx(1.0)
+    assert stats["n_conservation"] == 3
 
 
 def _pdb(coords):

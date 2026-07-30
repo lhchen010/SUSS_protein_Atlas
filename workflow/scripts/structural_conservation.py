@@ -23,12 +23,17 @@ from v3_utils import (
 def ca_atoms(path: str | Path) -> tuple[list[int], np.ndarray]:
     residue_numbers = []
     coordinates = []
+    seen = set()
     for line in Path(path).read_text(
         encoding="utf-8", errors="replace"
     ).splitlines():
-        if line.startswith("ATOM") and line[12:16].strip() == "CA":
+        if line.startswith(("ATOM", "HETATM")) and line[12:16].strip() == "CA":
             try:
-                residue_numbers.append(int(line[22:26]))
+                residue_key = (line[21:22], int(line[22:26]), line[26:27])
+                if residue_key in seen:
+                    continue
+                seen.add(residue_key)
+                residue_numbers.append(residue_key[1])
                 coordinates.append(
                     [float(line[30:38]), float(line[38:46]), float(line[46:54])]
                 )
@@ -94,13 +99,19 @@ with tempfile.TemporaryDirectory(prefix=f"{family}_lddt_") as tmp:
     )
 
 hub_numbers, _ = ca_atoms(path_by_acc[hub])
+hub_alignment_residues = sum(
+    symbol not in {"-", "."} for symbol in aa_alignment[hub]
+)
+if len(hub_numbers) != hub_alignment_residues:
+    raise RuntimeError(
+        f"{family}: hub {hub} has {len(hub_numbers)} unique CA residues but "
+        f"{hub_alignment_residues} non-gap FoldMason residues"
+    )
 rows = []
 hub_residue_index = 0
 for column, hub_symbol in enumerate(aa_alignment[hub]):
     if hub_symbol in {"-", "."}:
         continue
-    if hub_residue_index >= len(hub_numbers):
-        break
     aa_values = [aa_alignment[member][column] for member in members]
     di_values = [
         di_alignment.get(member, "")[column]
@@ -133,6 +144,9 @@ result.to_csv(snakemake.output.csv, index=False)
 
 score_by_residue = dict(zip(result.resi, result.structural_lddt))
 output_lines = []
+output_lines.append(
+    "REMARK 950 B-FACTOR = 100 * FOLDMASON LDDT; -1.00 = UNSCORED\n"
+)
 for line in Path(path_by_acc[hub]).read_text(
     encoding="utf-8", errors="replace"
 ).splitlines(keepends=True):
@@ -143,7 +157,7 @@ for line in Path(path_by_acc[hub]).read_text(
             output_lines.append(line)
             continue
         score = score_by_residue.get(residue)
-        bfactor = 0.0 if pd.isna(score) else 100.0 * float(score)
+        bfactor = -1.0 if pd.isna(score) else 100.0 * float(score)
         output_lines.append(f"{line[:60]}{bfactor:6.2f}{line[66:]}")
     else:
         output_lines.append(line)
