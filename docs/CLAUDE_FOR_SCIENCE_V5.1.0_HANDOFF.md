@@ -91,7 +91,10 @@ a red/blue legend over a grey structure. Exhaustive `domain_members` and
 
 ## Reference regression
 
-Reference candidate: `20260730-v5.1.0-rc1`
+Deployed reference: `20260730-v5.1.0-reference`
+
+Portal URL:
+`http://100.80.77.29:8600/atlas?id=20260730-v5.1.0-reference`
 
 Domain workbench schema: `4`.
 
@@ -148,9 +151,18 @@ shown as unavailable rather than hidden.
 
 - Local Python tests: 55 passed.
 - 4070 Python tests: 55 passed.
+- GitHub Actions: passed.
 - Domain workflow dry-run: passed.
 - D workbench rebuild: 172/172 families completed.
+- ESM representative scan: 453/453 proteins completed, including 172/172
+  independent D-family hubs.
 - D40/D70/D94 focused regression: passed.
+- Download regression: D40, D70, and D94 Excel and complete ZIP packages passed.
+- Portal artifact smoke test: atlas, D40/D70 Excel, and D40 complete ZIP returned
+  HTTP 200.
+- Browser regression: Domain overview and segment networks rendered without
+  console errors; D40 structure/ESM/heatmaps, D70 and D94 Rate4Site states, and
+  the F8 RNA-seq/FoldTree/sequence/structure views passed.
 
 ## Claude acceptance checklist
 
