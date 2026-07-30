@@ -587,7 +587,7 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert "Foldseek TM matrix was not available" in renderer
     assert "Independent US-align matrix was not available" in renderer
     assert "FoldTree structural relationship" in renderer
-    assert "MAFFT amino-acid MSA" in renderer
+    assert "Independent D-segment BLASTp subgroup" in renderer
     assert "FoldMason structural MSA" in renderer
     assert "domain-architecture" in renderer
     assert "DOMAIN_EDGES" in renderer
@@ -608,7 +608,7 @@ def test_domain_family_mode_and_structure_search_are_exposed():
     assert 'name=analysis_scope value=both checked' in portal
     assert 'name=analysis_scope value=domain' in portal
     assert 'analysis_scope in ("full", "both")' in portal
-    assert "F-family sequence MSA / tree" in portal
+    assert "Sequence MSA / tree (F proteins + independent D segments)" in portal
     assert 'kind == "domain_package"' in portal
     assert 'kind == "domain_parents"' in portal
 
