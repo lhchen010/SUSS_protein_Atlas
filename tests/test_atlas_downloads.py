@@ -811,6 +811,31 @@ def test_structural_color_direction_and_missing_coverage_are_explicit():
     assert "insufficient pair coverage" in renderer
 
 
+def test_viewer_context_conservation_mapping_and_analysis_axes_are_explicit():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text()
+    prefix = (
+        ROOT / "workflow" / "builders" / "template" / "prefix.html"
+    ).read_text()
+
+    assert "function domainStructuralValues" in renderer
+    assert "wb.structural_msa" in renderer
+    assert "wb.structural_conservation" in renderer
+    assert "domainStructuralValues(seg,wb)" in renderer
+    assert 'seg.segment_id===wb.hub?' not in renderer
+    assert 'color:"#b9c1c5",opacity:domainRepMode==="surface"?.52:.9' in renderer
+    assert 'preferred="quality"' in renderer
+    assert 'id="bquality" class="on"' in renderer
+    assert "function setAnalysisAxis" in renderer
+    assert 'id="scopefull"' in prefix
+    assert 'id="scopedomain"' in prefix
+    assert 'id="fullModeTabs"' in prefix
+    assert 'id="domainModeTabs"' in prefix
+    assert "Full-length analysis" in prefix
+    assert "Domain analysis" in prefix
+
+
 def test_domain_annotations_require_coordinate_overlap():
     row = pd.Series({
         "pfam_domains": "Thioredoxin(12-99) | Remote domain(150-220)",
