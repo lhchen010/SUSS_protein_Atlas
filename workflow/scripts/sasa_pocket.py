@@ -48,7 +48,7 @@ pd.DataFrame(rows).to_csv(out_sasa, index=False)
 print(f"SASA: {len({r['acc'] for r in rows})} proteins, {len(rows)} residues")
 
 # --- pockets on every protein; family keys alias their reference protein ---
-famdir = os.path.join(os.path.dirname(out_sasa), "families")
+famdir = snakemake.input.famdir
 members = pd.read_csv(snakemake.input.members)
 P2RANK = resolve_executable(p2rank, "P2Rank") if enabled and str(p2rank).strip() else None
 FPOCKET = resolve_executable(fpocket, "fpocket") if enabled and str(fpocket).strip() else None
@@ -174,6 +174,14 @@ def predict_pockets(ref):
                                "top_probability": top["probability"],
                                "n_pockets": len(all_pockets),
                                "lining_residues": top["lining_residues"], "pockets": all_pockets}
+        else:
+            entry["p2rank"] = {
+                "top_score": None,
+                "top_probability": None,
+                "n_pockets": 0,
+                "lining_residues": [],
+                "pockets": [],
+            }
     # fpocket (local only)
     if FPOCKET:
         fwd = os.path.join(os.path.dirname(out_sasa), "fpocket", storage_key); os.makedirs(fwd, exist_ok=True)

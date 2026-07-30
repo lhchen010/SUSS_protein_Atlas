@@ -7,6 +7,7 @@ structural_path = snakemake.input.structural
 status_path = snakemake.input.status
 sasa_csv = snakemake.input.sasa
 ref_path = snakemake.input.ref            # {fam}.ref — the EXACT protein r4s numbered by
+famfile = snakemake.input.famfile
 pdb_dir  = getattr(snakemake.input, "pdb_dir", None)
 out_csv  = snakemake.output[0]
 out_pdb  = snakemake.output[1] if len(snakemake.output) > 1 else None
@@ -18,7 +19,6 @@ ref = None
 if os.path.exists(ref_path):
     ref = open(ref_path).read().strip() or None
 if ref is None:
-    famfile = os.path.join(os.path.dirname(os.path.dirname(r4s_path)), f"{fam}.members.txt")
     if os.path.exists(famfile):
         m = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", os.path.basename(open(famfile).readline().strip()))
         ref = m.group(0) if m else None

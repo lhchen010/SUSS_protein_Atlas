@@ -312,6 +312,7 @@ unless all required evidence is complete.
 | [docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md) | v5.0.2 viewer hierarchy, all-segment structural conservation, two-axis navigation, and acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md) | v5.1 independent D-segment BLAST, D-specific sequence evolution, D-hub ESM semantics, and Claude acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md) | v5.1.1 Domain borderline/filtered-hit diagnostics, TDZ19858.1 acceptance case, and Claude test checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md) | v5.1.2 independent F23 audit, family-path and directional-metadata fixes, pocket/download correctness, 4070 logs, and Claude acceptance checklist |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses

@@ -259,7 +259,8 @@ rule sequence_subgroups:
 
 # ---------- second half: all proteins incl. singletons ----------
 rule sasa_pocket:
-    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv", members=f"{RESULTS}/members.csv"
+    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv",
+            members=f"{RESULTS}/members.csv", famdir=MEMBER_DIR
     output: sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json"
     threads: 4
     params: enabled=on("pocket"), p2rank=TOOLS.get("p2rank", ""),
@@ -282,6 +283,7 @@ rule esm:
     input:
         seqs=f"{RESULTS}/seqs.fasta",
         members=f"{RESULTS}/members.csv",
+        famdir=MEMBER_DIR,
         domain_members=f"{RESULTS}/domain_members.csv",
         domain_workbench=f"{RESULTS}/domain_workbench.json"
     output: f"{RESULTS}/esm_all.csv"
@@ -324,7 +326,7 @@ rule structural_conservation:
     input:
         aa=f"{FAM_DIR}/{{fam}}/{{fam}}.aln",
         di=f"{FAM_DIR}/{{fam}}/{{fam}}.fasta",
-        famfile=f"{FAM_DIR}/{{fam}}.members.txt"
+        famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"
     output:
         csv=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.csv",
         pdb=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.pdb"
@@ -379,6 +381,7 @@ rule signature:
             status=f"{FAM_DIR}/{{fam}}/{{fam}}_sequence_analysis_status.json",
             structural=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.csv",
             sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json",
+            famfile=f"{MEMBER_DIR}/{{fam}}.members.txt",
             pdb_dir=PDB_DIR
     output: f"{FAM_DIR}/{{fam}}/{{fam}}_signature.csv",
             f"{FAM_DIR}/{{fam}}/{{fam}}_conservation.pdb"

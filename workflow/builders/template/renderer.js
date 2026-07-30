@@ -125,8 +125,9 @@ function ensureDomainNetwork(){
  var box=document.getElementById("domains");if(!box||domainNetwork)return;
  var nodes=(DNET.nodes||DOMAIN_FAMILIES).map(function(d){var label=d.domain_family+(d.top_annotation?("\n"+shortLab(d.top_annotation)):"");return{id:d.domain_family,label:label,value:d.n_segments,color:{background:domainNodeColor(d.mean_lddt),border:"#46616c"},title:esc(d.domain_family)+": "+d.n_segments+" segments / "+d.n_proteins+" proteins<br>mean local lDDT "+fnum(d.mean_lddt,3)+(d.top_annotation?"<br>"+esc(d.top_annotation):"")};});
  var edges=(DNET.edges||[]).map(function(e,i){return{id:"dbridge-"+i,from:e.from,to:e.to,value:Math.max(1,e.n),title:e.n+" local structural bridge"+(e.n===1?"":"s")+"<br>mean lDDT "+fnum(e.lddt,3)+"<br>mean probability "+fnum(e.prob,3),color:{color:"#a5b4ba",opacity:.65}};});
+ var fixedSmallNetwork=edges.length===0&&nodes.length>1&&nodes.length<=6;if(fixedSmallNetwork)nodes.forEach(function(node,index){node.x=(index-(nodes.length-1)/2)*190;node.y=0;node.fixed={x:true,y:true};});
  domainNetworkNodes=new vis.DataSet(nodes);domainNetworkEdges=new vis.DataSet(edges);
- domainNetwork=new vis.Network(box,{nodes:domainNetworkNodes,edges:domainNetworkEdges},{nodes:{shape:"dot",scaling:{min:9,max:36,label:{min:10,max:18}},font:{size:12}},edges:{smooth:false,scaling:{min:1,max:5}},physics:{barnesHut:{gravitationalConstant:-2800,springLength:120},stabilization:{iterations:180}},interaction:{hover:true}});
+ domainNetwork=new vis.Network(box,{nodes:domainNetworkNodes,edges:domainNetworkEdges},{nodes:{shape:"dot",scaling:{min:9,max:36,label:{min:10,max:18}},font:{size:12}},edges:{smooth:false,scaling:{min:1,max:5}},physics:fixedSmallNetwork?false:{barnesHut:{gravitationalConstant:-2800,springLength:120},stabilization:{iterations:180}},interaction:{hover:true}});
  domainNetwork.on("click",function(p){if(p.nodes.length)showDomain(p.nodes[0]);});
  domainNetwork.once("stabilizationIterationsDone",function(){domainNetwork.stopSimulation();});
 }

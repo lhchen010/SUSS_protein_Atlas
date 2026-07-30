@@ -64,6 +64,61 @@ def test_whole_fold_edges_require_tm_and_reciprocal_coverage():
     assert edges.iloc[0].min_coverage == 0.8
 
 
+def test_whole_fold_edges_are_directional_field_and_row_order_invariant():
+    rows = [
+        {
+            "query": "B.pdb",
+            "target": "A.pdb",
+            "alntmscore": 0.7,
+            "qtmscore": 0.7,
+            "ttmscore": 0.8,
+            "lddt": 0.72,
+            "fident": 0.2,
+            "alnlen": 80,
+            "qlen": 100,
+            "tlen": 120,
+            "evalue": 1e-6,
+            "bits": 90,
+        },
+        {
+            "query": "A.pdb",
+            "target": "B.pdb",
+            "alntmscore": 0.7,
+            "qtmscore": 0.8,
+            "ttmscore": 0.7,
+            "lddt": 0.70,
+            "fident": 0.2,
+            "alnlen": 80,
+            "qlen": 120,
+            "tlen": 100,
+            "evalue": 1e-6,
+            "bits": 90,
+        },
+    ]
+
+    forward = whole_fold_edges(
+        pd.DataFrame(rows),
+        tm_threshold=0.5,
+        coverage_threshold=0.5,
+        symmetry="min",
+    )
+    reverse = whole_fold_edges(
+        pd.DataFrame(list(reversed(rows))),
+        tm_threshold=0.5,
+        coverage_threshold=0.5,
+        symmetry="min",
+    )
+
+    pd.testing.assert_frame_equal(forward, reverse)
+    edge = forward.iloc[0]
+    assert (edge.q, edge.t) == ("A", "B")
+    assert edge.qtmscore == 0.8
+    assert edge.ttmscore == 0.7
+    assert edge.qcov == 80 / 120
+    assert edge.tcov == 0.8
+    assert edge.lddt == 0.72
+
+
 def test_blast_relationship_uses_best_hit_that_passes_coverage():
     hits = pd.DataFrame([
         {
@@ -83,6 +138,35 @@ def test_blast_relationship_uses_best_hit_that_passes_coverage():
     assert len(selected) == 1
     assert selected.iloc[0].evalue == 1e-20
     assert selected.iloc[0].pident == 40
+
+
+def test_blast_relationship_orients_directional_fields_with_pair():
+    hits = pd.DataFrame(
+        [
+            {
+                "q": "B",
+                "t": "A",
+                "evalue": 1e-20,
+                "bitscore": 180,
+                "min_coverage": 0.8,
+                "pident": 40,
+                "qcov": 0.9,
+                "scov": 0.8,
+                "qlen": 90,
+                "slen": 100,
+            }
+        ]
+    )
+
+    selected = select_blast_relationships(
+        hits, evalue_threshold=1e-3, coverage_threshold=0.5
+    ).iloc[0]
+
+    assert (selected.q, selected.t) == ("A", "B")
+    assert selected.qcov == 0.8
+    assert selected.scov == 0.9
+    assert selected.qlen == 100
+    assert selected.slen == 90
 
 
 def test_alignment_coverage_is_bounded_to_probability_range():
