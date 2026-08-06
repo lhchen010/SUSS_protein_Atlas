@@ -36,6 +36,10 @@ The full-length member-download panel and the equivalent singleton download
 panel now inherit the dark detail-workbench theme. Their legacy inline light
 background was removed; download behavior and artifact contents are unchanged.
 
+v5.2.2 extends that cleanup to the per-member annotation table and allows the
+full-length, domain, and singleton analysis tabs to wrap into additional rows
+as the detail panel narrows. Tab actions and analysis contents are unchanged.
+
 ## Verification
 
 ```text

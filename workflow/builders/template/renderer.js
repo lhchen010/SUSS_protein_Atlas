@@ -462,14 +462,14 @@ function annHTML(fam){
   if(an.fusion)h+='<tr><td>Multi-domain / fusion</td><td><b style="color:#c0392b">'+an.n_multi+' members</b></td></tr>';
   h+='</table>';
   h+='<h3>Per-member annotation ('+an.n+')</h3>';
-  h+='<div style="max-height:340px;overflow:auto"><table style="font-size:11px">';
-  h+='<tr style="position:sticky;top:0;background:#eef"><td style="width:auto"><b>Protein</b></td><td><b>EffectorP</b></td><td><b>TM (DeepTMHMM)</b></td><td><b>Pfam domain(s)</b></td><td><b>PDB fold</b></td><td><b>AFDB-SwissProt (Foldseek)</b></td></tr>';
+  h+='<div class="annotation-table-wrap"><table class="annotation-table"><thead>';
+  h+='<tr><th>Protein</th><th>EffectorP</th><th>TM (DeepTMHMM)</th><th>Pfam domain(s)</th><th>PDB fold</th><th>AFDB-SwissProt (Foldseek)</th></tr></thead><tbody>';
   an.members.forEach(function(m){
     var tag=m.novel?' <span style="color:#c0392b;font-weight:600">novel</span>':'';
     var tm=m.tm>0?' <span style="color:#e67e22">['+m.tm+'TM]</span>':'';
     h+='<tr><td>'+m.acc+tag+'</td><td>'+m.eff.replace(" effector","")+'</td><td>'+(m.tm>0?'<span style="color:#e67e22">'+m.tm+' TMR</span>':'\u2014')+'</td><td>'+m.pfam+'</td><td>'+m.pdb+'</td><td>'+(m.afdb||'\u2014')+'</td></tr>';
   });
-  h+='</table></div>';
+  h+='</tbody></table></div>';
   h+='<div class="hint" style="margin-top:5px">InterProScan (Pfam+CDD+Gene3D) · Foldseek vs PDB100/AFDB-SwissProt · EffectorP 3.0 · DeepTMHMM. \u201cnovel\u201d = no domain &amp; no structural homolog. [nTM] = predicted transmembrane region.</div>';
   return h;
 }

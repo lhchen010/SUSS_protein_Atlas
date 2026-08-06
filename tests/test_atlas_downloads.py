@@ -1021,6 +1021,10 @@ def test_portal_and_atlas_share_the_scientific_console_visual_contract():
     assert "#primary{border-right:0;background:var(--s-paper)}" in prefix
     assert ".dlbar{margin-top:8px" in prefix
     assert "background:#f7f9fb" not in renderer
+    assert ".annotation-table-wrap{max-height:340px" in prefix
+    assert "class=\"annotation-table\"" in renderer
+    assert "background:#eef" not in renderer
+    assert "flex-wrap:wrap;overflow:visible" in prefix
     assert "@media(max-width:700px)" in prefix
 
 
