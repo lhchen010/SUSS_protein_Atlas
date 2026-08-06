@@ -1000,6 +1000,25 @@ def test_viewer_context_conservation_mapping_and_analysis_axes_are_explicit():
     assert "Domain analysis" in prefix
 
 
+def test_portal_and_atlas_share_the_scientific_console_visual_contract():
+    portal = (ROOT / "portal" / "suss_portal.py").read_text()
+    prefix = (
+        ROOT / "workflow" / "builders" / "template" / "prefix.html"
+    ).read_text()
+
+    assert "--cyan:#82ddf6" in portal
+    assert "STRUCTURE-FIRST COMPARATIVE PROTEOMICS" in portal
+    assert "class=brand-mark" in portal
+    assert "class=recent-table" in portal
+    assert "@media(max-width:620px)" in portal
+
+    assert "--s-cyan:#82ddf6" in prefix
+    assert "STRUCTURE-FIRST ATLAS" in prefix
+    assert ".mode-tabs.domain-axis button.on{background:var(--s-amber)" in prefix
+    assert "#primary{border-right:0;background:var(--s-paper)}" in prefix
+    assert "@media(max-width:700px)" in prefix
+
+
 def test_domain_sequence_search_is_a_declared_independent_workflow():
     snakefile = (ROOT / "workflow" / "Snakefile").read_text()
 

@@ -314,6 +314,7 @@ unless all required evidence is complete.
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md) | v5.1.1 Domain borderline/filtered-hit diagnostics, TDZ19858.1 acceptance case, and Claude test checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md) | v5.1.2 independent F23 audit, family-path and directional-metadata fixes, pocket/download correctness, 4070 logs, and Claude acceptance checklist |
 | [docs/CLAUDE_FOR_SCIENCE_V5.1.3_REVIEW_RESPONSE.md](docs/CLAUDE_FOR_SCIENCE_V5.1.3_REVIEW_RESPONSE.md) | v5.1.3 response to the independent 300-protein review: missing-pair statistics, conservation masking, declared outputs, 4070 rerun, and acceptance checklist |
+| [docs/CLAUDE_FOR_SCIENCE_V5.2.0_UI_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.2.0_UI_HANDOFF.md) | v5.2.0 scientific-console UI refresh for the portal and linked full-length/domain atlas workbenches, with visual acceptance checks |
 | [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
 
 ## Citation and licenses
