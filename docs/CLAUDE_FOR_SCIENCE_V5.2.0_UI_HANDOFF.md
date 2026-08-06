@@ -30,6 +30,12 @@ network labels require high contrast.
 - No download endpoint, artifact format, or atlas JSON schema changed.
 - Structure viewers and quantitative figures remain light-backed for legibility.
 
+## v5.2.1 follow-up
+
+The full-length member-download panel and the equivalent singleton download
+panel now inherit the dark detail-workbench theme. Their legacy inline light
+background was removed; download behavior and artifact contents are unchanged.
+
 ## Verification
 
 ```text

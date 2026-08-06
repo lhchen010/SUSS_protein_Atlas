@@ -1005,6 +1005,9 @@ def test_portal_and_atlas_share_the_scientific_console_visual_contract():
     prefix = (
         ROOT / "workflow" / "builders" / "template" / "prefix.html"
     ).read_text()
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text()
 
     assert "--cyan:#82ddf6" in portal
     assert "STRUCTURE-FIRST COMPARATIVE PROTEOMICS" in portal
@@ -1016,6 +1019,8 @@ def test_portal_and_atlas_share_the_scientific_console_visual_contract():
     assert "STRUCTURE-FIRST ATLAS" in prefix
     assert ".mode-tabs.domain-axis button.on{background:var(--s-amber)" in prefix
     assert "#primary{border-right:0;background:var(--s-paper)}" in prefix
+    assert ".dlbar{margin-top:8px" in prefix
+    assert "background:#f7f9fb" not in renderer
     assert "@media(max-width:700px)" in prefix
 
 
