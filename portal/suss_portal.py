@@ -109,42 +109,65 @@ def _load_history():
 
 # ------------------------------------------------------------------ HTML pages
 PAGE_CSS = """
-body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#233}
-h1{font-size:20px;margin:0 0 2px}.sub{color:#789;font-size:13px;margin-bottom:18px}
-fieldset{border:1px solid #dce3ea;border-radius:7px;margin:0 0 14px;padding:12px 14px}
-legend{font-weight:600;font-size:13px;color:#456;padding:0 6px}
-label{display:block;font-size:13px;margin:7px 0 2px;color:#456}
-input[type=text],select{width:100%;padding:6px 8px;border:1px solid #cdd6df;border-radius:5px;font-size:13px;box-sizing:border-box}
-input[type=file]{font-size:13px;margin-top:3px}
-.row{display:flex;gap:14px}.row>div{flex:1}
-.toggles{display:flex;flex-wrap:wrap;gap:4px 16px}.toggles label{display:flex;align-items:center;gap:5px;margin:3px 0;font-size:13px}
-.rng{display:flex;align-items:center;gap:8px}.rng input{flex:1}.rng b{min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
-button.go{background:#1a6db0;color:#fff;border:0;border-radius:6px;padding:10px 18px;font-size:14px;cursor:pointer}
-button.go:hover{background:#155a92}.hint{color:#789;font-size:12px}
-.err{background:#fdecea;border:1px solid #f5c2bd;color:#a3271b;padding:10px 12px;border-radius:6px;font-size:13px;white-space:pre-wrap}
-.ok{background:#eaf6ec;border:1px solid #bfe2c6;color:#1d6b2c;padding:10px 12px;border-radius:6px;font-size:13px}
-code{background:#f2f5f8;padding:1px 4px;border-radius:3px}
+:root{color-scheme:dark;--bg:#131416;--panel:#1a1b1e;--panel-2:#202226;--line:#34363c;--line-strong:#4a4d55;--ink:#ece9e1;--muted:#9d9b96;--cyan:#82ddf6;--blue:#a9c5e8;--green:#4fd59b;--amber:#e8bb70;--coral:#ef746b;--serif:Georgia,"Times New Roman",serif;--sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace}
+*{box-sizing:border-box}html{background:var(--bg)}body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:13px/1.55 var(--sans)}
+a{color:var(--cyan);text-decoration-color:#82ddf655;text-underline-offset:3px}a:hover{color:#c4f2ff;text-decoration-color:currentColor}
+.topbar{height:66px;padding:0 28px;border-bottom:1px solid var(--line);background:#151618;display:flex;align-items:center;justify-content:space-between;gap:24px;position:sticky;top:0;z-index:20}
+.brand{display:flex;align-items:center;gap:13px;color:var(--ink);text-decoration:none}.brand-mark{position:relative;width:22px;height:22px;flex:none}.brand-mark:before,.brand-mark:after{content:"";position:absolute;left:10px;top:0;width:1px;height:22px;background:var(--blue)}.brand-mark:after{transform:rotate(90deg)}.brand-mark i:before,.brand-mark i:after{content:"";position:absolute;left:10px;top:1px;width:1px;height:20px;background:#5f7188;transform:rotate(45deg)}.brand-mark i:after{transform:rotate(-45deg)}
+.brand-copy{display:grid;line-height:1}.brand-copy strong{font:500 19px/1 var(--serif)}.brand-copy small{margin-top:6px;color:var(--muted);font:8px/1 var(--mono);letter-spacing:.13em;text-transform:uppercase}
+.topbar-meta{display:flex;align-items:center;gap:22px;font:9px var(--mono);letter-spacing:.09em;text-transform:uppercase}.topbar-meta a{color:#bbb8b1;text-decoration:none}.local-status{padding:7px 12px;border:1px solid #2d3835;color:#b9c9c2}.local-status:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:8px;background:var(--green);box-shadow:0 0 8px #4fd59b80}
+.portal-shell{width:min(1180px,calc(100% - 40px));margin:0 auto;padding:48px 0 70px}
+.portal-intro{max-width:790px;margin-bottom:32px}.eyebrow{margin:0 0 13px;color:var(--blue);font:9px var(--mono);letter-spacing:.17em;text-transform:uppercase}.portal-intro h1,h1{margin:0 0 10px;font:500 42px/1.05 var(--serif);letter-spacing:0}.portal-intro p:not(.eyebrow),.sub{max-width:760px;margin:0;color:var(--muted);font-size:13px;line-height:1.65}.sub{margin-bottom:20px}
+.build-layout{display:grid;grid-template-columns:minmax(0,800px);gap:22px;align-items:start}.build-layout.has-history{grid-template-columns:minmax(0,1fr) 360px}.build-form{min-width:0}.build-aside{position:sticky;top:88px;min-width:0}
+fieldset{min-width:0;border:1px solid var(--line);border-radius:2px;margin:0 0 14px;padding:17px 18px 19px;background:var(--panel)}
+legend{padding:0 8px 0 0;color:var(--ink);font:500 17px var(--serif)}legend .step{margin-right:9px;color:var(--cyan);font:9px var(--mono);letter-spacing:.08em;vertical-align:2px}
+label{display:block;margin:10px 0 5px;color:#d0cec7;font-size:12px}.hint{color:var(--muted);font-size:11px;line-height:1.5}
+input[type=text],select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:2px;background:#121315;color:var(--ink);font:12px var(--sans)}
+input[type=text]:focus,select:focus,input[type=file]:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-color:var(--cyan)}
+input[type=file]{width:100%;margin:3px 0 5px;padding:7px;border:1px solid var(--line);background:#151619;color:var(--muted);font:10px var(--mono)}input[type=file]::file-selector-button{margin-right:10px;padding:7px 10px;border:1px solid #52606a;border-radius:1px;background:#24282d;color:var(--ink);font:9px var(--mono);letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
+input[type=checkbox],input[type=radio]{accent-color:#70cfe9}.row{display:flex;gap:14px}.row>div{flex:1;min-width:0}
+.toggles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.toggles label{display:flex;align-items:flex-start;gap:8px;margin:0;padding:9px 10px;border:1px solid #2e3035;background:#17181b;font-size:11px;line-height:1.4;cursor:pointer}.toggles label:has(input:checked){border-color:#527889;background:#182126;color:#edfaff}.toggles input{margin:2px 0 0;flex:none}.scope-options{grid-template-columns:1fr}.scope-options label{min-height:42px;align-items:center}
+.rng{display:grid;grid-template-columns:minmax(0,1fr) 58px;align-items:center;gap:12px;padding:2px 0 4px}.rng input{width:100%;accent-color:var(--cyan)}.rng b{padding:4px 6px;border:1px solid var(--line);background:#121315;color:var(--cyan);font:10px var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+button.go,.action-link{display:inline-flex;align-items:center;justify-content:center;min-height:42px;margin-top:5px;padding:10px 17px;border:1px solid #9fdff0;border-radius:1px;background:var(--cyan);color:#111619;font:600 10px var(--mono);letter-spacing:.06em;text-transform:uppercase;text-decoration:none;cursor:pointer;transition:background .15s ease,color .15s ease,transform .15s ease}button.go:hover,.action-link:hover{background:#c4f2ff;color:#0e1518;transform:translateY(-1px)}
+.action-link+.action-link{margin-left:6px}.action-link.secondary{border-color:#6c7f98;background:#20262d;color:var(--blue)}.action-link.success{border-color:#477963;background:#192721;color:#89e4b9}.action-link.warn{border-color:#806d48;background:#272218;color:var(--amber)}
+.form-submit{margin-top:17px;padding-top:17px;border-top:1px solid var(--line)}
+.err,.ok{padding:11px 13px;border-radius:2px;font-size:12px;white-space:pre-wrap;margin-bottom:14px}.err{border:1px solid #693c39;background:#2b1c1c;color:#ffaaa3}.ok{border:1px solid #315d49;background:#18271f;color:#8ce3b9}
+code{padding:2px 5px;border:1px solid #30343a;border-radius:1px;background:#101113;color:var(--blue);font:11px var(--mono)}
+details{margin:0 0 10px;border:1px solid var(--line);background:#17181b}details>summary{padding:11px 14px;color:var(--blue);font:9px var(--mono);letter-spacing:.07em;text-transform:uppercase;cursor:pointer}details[open]>summary{border-bottom:1px solid var(--line)}details fieldset{margin:0!important;border:0;background:transparent}
+.recent-panel{border:1px solid var(--line);background:var(--panel);padding:0}.panel-heading{padding:15px 16px 12px;border-bottom:1px solid var(--line);display:flex;align-items:end;justify-content:space-between}.panel-heading h2{margin:0;font:500 19px var(--serif)}.panel-heading span{color:var(--muted);font:8px var(--mono);letter-spacing:.08em;text-transform:uppercase}.table-scroll{overflow:auto}.recent-panel table,table{width:100%;border-collapse:collapse;font-size:11px}.recent-panel th,th{padding:9px 10px;color:#868b91;font:8px var(--mono);letter-spacing:.07em;text-align:left;text-transform:uppercase;border-bottom:1px solid var(--line)}.recent-panel td,td{padding:9px 10px;border-bottom:1px solid #292b2f;vertical-align:top}.recent-panel tr:last-child td{border-bottom:0}.recent-panel .recent-table th:first-child,.recent-panel .recent-table td:first-child,.recent-panel .recent-table th:nth-child(5),.recent-panel .recent-table td:nth-child(5){display:none}.recent-panel .recent-table td:nth-child(2){width:48%;overflow-wrap:anywhere}.recent-footer{padding:11px 14px;border-top:1px solid var(--line);font:9px var(--mono);text-transform:uppercase}.state{font:9px var(--mono);letter-spacing:.04em;text-transform:uppercase}.state-done{color:var(--green)}.state-error{color:var(--coral)}.state-running{color:var(--cyan)}.state-waiting{color:var(--amber)}.delete-run{border:0!important;background:none!important;color:var(--coral)!important;font:9px var(--mono)!important;text-transform:uppercase;cursor:pointer;padding:0!important;text-decoration:none!important}
+pre{border:1px solid var(--line)!important;border-radius:2px!important;background:#0d0f11!important;color:#cbd5dd!important;font:11px/1.55 var(--mono)!important}
+.method-example{margin:7px 0;padding:10px 12px;border:1px solid #3a3d43;background:#111214;color:var(--blue);font:11px var(--mono)}
+@media(max-width:940px){.build-layout{grid-template-columns:1fr}.build-aside{position:static;order:-1}.portal-shell{padding-top:32px}.portal-intro h1,h1{font-size:36px}}
+@media(max-width:620px){.topbar{height:auto;min-height:62px;padding:12px 16px}.topbar-meta{gap:12px}.local-status{display:none}.portal-shell{width:min(100% - 24px,1180px);padding-top:28px}.portal-intro h1,h1{font-size:31px}.row{display:block}.toggles{grid-template-columns:1fr}.recent-panel .recent-table{min-width:0}.brand-copy small{display:none}}
 """
 
 def page(body, title="SUSS Atlas portal"):
+    chrome = """
+    <header class=topbar>
+      <a class=brand href=/><span class=brand-mark><i></i></span><span class=brand-copy><strong>SUSS Protein Atlas</strong><small>structural family workbench</small></span></a>
+      <nav class=topbar-meta><span class=local-status>4070 local compute</span><a href=/history>Runs</a><a href=/help>Methods</a></nav>
+    </header>"""
     return (f"<!doctype html><html><head><meta charset=utf-8><title>{title}</title>"
             f"<meta name=viewport content='width=device-width,initial-scale=1'>"
-            f"<style>{PAGE_CSS}</style></head><body>{body}</body></html>").encode()
+            f"<style>{PAGE_CSS}</style></head><body>{chrome}<main class=portal-shell>{body}</main></body></html>").encode()
 
 def form_page(msg_html=""):
     recent = history_rows(limit=5)
-    hist = (f"<fieldset><legend>Recent runs</legend><table style='font-size:12.5px;width:100%'>"
-            f"<tr style='text-align:left;color:#678'><th>started</th><th>job</th><th>strain</th><th>state</th><th>detail</th><th>links</th></tr>"
-            f"{recent}</table><div style='margin-top:6px'><a href=/history>full history →</a></div></fieldset>"
+    hist = (f"<section class=recent-panel><div class=panel-heading><h2>Recent runs</h2><span>persistent history</span></div><div class=table-scroll><table class=recent-table>"
+            f"<tr><th>started</th><th>job</th><th>strain</th><th>state</th><th>detail</th><th>links</th></tr>"
+            f"{recent}</table></div><div class=recent-footer><a href=/history>View full history</a></div></section>"
             ) if recent else ""
     b = f"""
-    <h1>SUSS Effector Atlas — build portal</h1>
-    <div class=sub>Upload a strain's secreted-protein AF2 structures; the pipeline builds an interactive SUSS atlas on this machine. Intranet test server. &middot; <a href=/history>run history</a> &middot; <a href=/help>help</a></div>
+    <section class=portal-intro>
+      <p class=eyebrow>STRUCTURE-FIRST COMPARATIVE PROTEOMICS</p>
+      <h1>Build a SUSS protein atlas.</h1>
+      <p>Turn a secreted-protein structure set into linked full-length and domain-aware families, with sequence evolution, pockets, expression and annotation in one research workspace.</p>
+    </section>
     {msg_html}
-    {hist}"""
+    <div class="build-layout{' has-history' if hist else ''}"><div class=build-form>"""
     b += f"""
     <form method=POST action=/run enctype=multipart/form-data>
-      <fieldset><legend>Strain</legend>
+      <fieldset><legend><span class=step>01</span>Sample</legend>
         <div class=row>
           <div><label>Strain code (structure filename prefix)</label><input type=text name=code value=cor></div>
           <div><label>Species</label><input type=text name=species value="Colletotrichum orbiculare"></div>
@@ -152,7 +175,7 @@ def form_page(msg_html=""):
         <label>Host / host range</label><input type=text name=host_range value="Nicotiana benthamiana / Cucurbitaceae">
         <label>Colletotrichum?</label><select name=is_colleto><option value=true selected>yes</option><option value=false>no (outgroup)</option></select>
       </fieldset>
-      <fieldset><legend>Input files</legend>
+      <fieldset><legend><span class=step>02</span>Input files</legend>
         <label>Structures — <b>.tar.gz of PDB files</b> (mature, signal peptide removed) <span class=hint>required</span></label>
         <input type=file name=pdb_tar accept=".gz,.tgz,.tar">
         <label>Sequences — <b>seqs.fasta</b> <span class=hint>optional; derived from structures if omitted</span></label>
@@ -164,9 +187,9 @@ def form_page(msg_html=""):
           <a href="/example?f=rnaseq_template_blank.xlsx">blank template</a> &middot;
           <a href="/help#rnaseq">format help</a></div>
       </fieldset>
-      <fieldset><legend>Analyses to run</legend>
+      <fieldset><legend><span class=step>03</span>Analyses</legend>
         <label>Atlas scope</label>
-        <div class=toggles>
+        <div class="toggles scope-options">
           <label><input type=radio name=analysis_scope value=both checked> Combined — full-length and domain-aware families (recommended)</label>
           <label><input type=radio name=analysis_scope value=full> Full-length only — F families and protein singletons</label>
           <label><input type=radio name=analysis_scope value=domain> Domain-aware only — D families and unclustered proteins</label>
@@ -187,7 +210,7 @@ def form_page(msg_html=""):
           <label><input type=checkbox name=rnaseq_step checked> RNAseq (if xlsx given)</label>
         </div>
       </fieldset>
-      <fieldset><legend>Parameters <span class=hint>(lab defaults; usually unchanged)</span></legend>
+      <fieldset><legend><span class=step>04</span>Core parameters</legend>
         <label>Foldseek TM threshold <span class=hint>fold-similarity cutoff</span></label>
         <div class=rng><input type=range name=tm min=0.4 max=0.7 step=0.05 value=0.5 oninput="this.nextElementSibling.textContent=this.value"><b>0.5</b></div>
         <label>Minimum reciprocal structural coverage <span class=hint>both proteins must align over this fraction</span></label>
@@ -230,9 +253,9 @@ def form_page(msg_html=""):
           <div class=hint>AlphaFold PDB files store pLDDT in the B-factor column. The AlphaFold profile prevents P2Rank from interpreting pLDDT as an experimental B-factor feature. fpocket is run independently with the same coordinates.</div>
         </fieldset>
       </details>
-      <button class=go type=submit>Validate &amp; build atlas</button>
-      <div class=hint style="margin-top:8px">Files are validated for format before the pipeline runs. A malformed RNAseq workbook or empty structure set is rejected with a clear error.</div>
-    </form>"""
+      <div class=form-submit><button class=go type=submit>Validate &amp; build atlas</button>
+      <div class=hint style="margin-top:8px">Inputs are validated before compute begins. Malformed RNA-seq workbooks and empty structure sets fail with an explicit message.</div></div>
+    </form></div><aside class=build-aside>{hist}</aside></div>"""
     return page(b)
 
 def _params_block(j):
@@ -268,7 +291,7 @@ def _params_block(j):
     ]
     if j.get("npdb") is not None: rows.append(("Structures used", j["npdb"]))
     if j.get("nseq"): rows.append(("Sequences provided", j["nseq"]))
-    tr = "".join(f"<tr><td style='color:#678;padding:2px 10px 2px 0'>{esc(k)}</td>"
+    tr = "".join(f"<tr><td class=hint style='padding:2px 10px 2px 0'>{esc(k)}</td>"
                  f"<td><b>{esc(v)}</b></td></tr>" for k, v in rows)
     # input downloads (original uploads preserved under the job dir)
     updir = os.path.join(j["dir"], "inputs")
@@ -535,7 +558,7 @@ show sel atoms ; color sel red</pre>
           <b>recent_duplicate</b> (≥50%).</li>
       <li><b>core_SUSS %</b> — the headline SUSS-ness number. Computed <i>per family</i> over its
           within-family structural links (edges), not over members:
-          <div style="background:#f4f6f8;border-radius:6px;padding:9px 12px;margin:6px 0;font-family:monospace;font-size:13px">
+          <div class=method-example>
           core_SUSS %&nbsp;=&nbsp;100 ×
           (# within-family edges labelled core_SUSS) / (# within-family edges)</div>
           where a <b>within-family edge</b> is a pair of members of that family whose structures are
@@ -612,16 +635,15 @@ show sel atoms ; color sel red</pre>
 def _fmt_time(ts):
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else "—"
 
-_STATE_BADGE = {"done": "#1d6b2c", "error": "#a3271b", "running": "#1a6db0",
-                "validating": "#8a6d1a", "staging": "#8a6d1a", "queued": "#789"}
-
 def history_rows(limit=None):
     items = sorted(JOBS.values(), key=lambda x: x.get("started", 0), reverse=True)
     if limit: items = items[:limit]
     out = []
     for j in items:
         m = j.get("meta") or {}
-        st = j["state"]; col = _STATE_BADGE.get(st, "#789")
+        st = j["state"]
+        state_class = ("state-done" if st == "done" else "state-error" if st == "error"
+                       else "state-running" if st == "running" else "state-waiting")
         fam = j.get("families")
         detail = (f"{fam} families" if st == "done" and fam is not None else
                   (html.escape(j.get("msg", ""))[:60] if st == "error" else st))
@@ -630,7 +652,7 @@ def history_rows(limit=None):
             f"<td style='padding:3px 10px 3px 0;font-variant-numeric:tabular-nums'>{_fmt_time(j.get('started'))}</td>"
             f"<td><a href='/status?id={j['job_id']}'>{html.escape(j['job_id'])}</a></td>"
             f"<td>{html.escape(m.get('code',''))}</td>"
-            f"<td><span style='color:{col};font-weight:600'>{st}</span></td>"
+            f"<td><span class='state {state_class}'>{st}</span></td>"
             f"<td class=hint>{detail}</td>"
             f"<td>" + (f"<a href='/atlas?id={j['job_id']}'>atlas</a> " if st=='done' else "") +
             f"<a href='/log?id={j['job_id']}'>log</a>"
@@ -639,7 +661,7 @@ def history_rows(limit=None):
                f"onsubmit=\"return confirm('Delete run {html.escape(j['job_id'])} and free its disk space on the server? This cannot be undone.')\">"
                f"<input type=hidden name=id value='{html.escape(j['job_id'])}'>"
                f"<input type=hidden name=csrf value='{CSRF_TOKEN}'>"
-               f"<button type=submit style='color:#b00;background:none;border:none;cursor:pointer;padding:0;font-size:13px;text-decoration:underline'>delete</button></form>")
+               f"<button class=delete-run type=submit>delete</button></form>")
             + f"</td></tr>")
     return "".join(out)
 
@@ -668,9 +690,9 @@ def status_page(job_id):
         fam = j.get("families", "?")
         return page(head + f"<div class=ok>Done — {fam} families. Atlas ready.</div>"
                     f"<div style='margin:14px 0'>"
-                    f"<a href=/atlas?id={job_id} style='background:#1a6db0;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px'>▶ Open atlas</a> "
-                    f"<a href=/atlas?id={job_id}&dl=1 style='background:#1d6b2c;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px;margin-left:6px'>⬇ Download atlas shell</a>"
-                    f"<a href=/summary?id={job_id} style='background:#6a4a9c;color:#fff;padding:9px 16px;border-radius:6px;text-decoration:none;font-size:14px;margin-left:6px'>⬇ Family summary (Excel)</a>"
+                    f"<a class=action-link href=/atlas?id={job_id}>Open atlas</a> "
+                    f"<a class='action-link success' href=/atlas?id={job_id}&dl=1>Download atlas shell</a>"
+                    f"<a class='action-link secondary' href=/summary?id={job_id}>Family summary (Excel)</a>"
                     f"</div>"
                     f"<div class=hint>The <b>family summary</b> Excel has one row per cluster: members, consensus annotation, "
                     f"Pfam/PDB fold, pocket residues (fpocket + P2Rank), mean structural similarity (TM), sequence identity, and SUSS %.</div>"
