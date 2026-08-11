@@ -190,6 +190,11 @@ The portal offers `Full-length`, `Domain-aware`, and `Combined` analysis scopes.
 one HTML. Combined is recommended because one D family may bridge several F families and one F
 family may contain several D families.
 
+The build form also exposes the accepted mature-protein length range and minimum mean pLDDT.
+Length is counted from CA residues in the uploaded structures. Defaults remain 50–1000 aa, but the
+minimum can be lowered for short secreted proteins. The effective QC values are saved with every
+run, and the same QC-passing structures are used by full-length and domain Foldseek searches.
+
 The portal also accepts a PDB or mmCIF query after a run completes. It searches that run's
 Foldseek database and maps each hit directly to its F family or singleton, D-family memberships,
 and S subgroup. Result accessions and family identifiers link directly back to the corresponding

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -164,6 +165,8 @@ def select_blast_relationships(
 def domain_sequence_records(
     members: pd.DataFrame,
     parent_sequences: dict[str, str],
+    *,
+    skip_missing_parents: bool = False,
 ) -> tuple[dict[str, str], pd.DataFrame]:
     """Extract coordinate-defined domain sequences with an auditable manifest."""
     records: dict[str, str] = {}
@@ -184,6 +187,12 @@ def domain_sequence_records(
         start, end = int(row.start), int(row.end)
         sequence = parent_sequences.get(accession, "")
         if not sequence:
+            if skip_missing_parents:
+                warnings.warn(
+                    f"Skipping {segment_id}: parent sequence {accession} is missing",
+                    RuntimeWarning,
+                )
+                continue
             raise ValueError(f"{segment_id}: parent sequence {accession} is missing")
         if start < 1 or end < start or end > len(sequence):
             raise ValueError(
