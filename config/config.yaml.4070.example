@@ -53,9 +53,9 @@ classification:
   min_reciprocal_coverage: 0.5
 
 qc:
-  min_plddt: 50
-  max_length: 1000
-  min_length: 50
+  min_plddt: 50                    # mean AlphaFold confidence, 0-100
+  max_length: 1000                 # mature structure length counted from CA residues
+  min_length: 50                   # lower for short secreted proteins; report the chosen cutoff
 
 signals:
   foldtree_metrics: [foldtree, alntmscore, lddt]

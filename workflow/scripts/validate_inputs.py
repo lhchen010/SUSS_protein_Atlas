@@ -12,6 +12,26 @@ def validate(cfg):
     pdb_dir = cfg["input"]["pdb_dir"]
     accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 
+    qc = cfg.get("qc", {})
+    try:
+        min_length = int(qc.get("min_length", 50))
+        max_length = int(qc.get("max_length", 1000))
+        min_plddt = float(qc.get("min_plddt", 50))
+    except (TypeError, ValueError):
+        errors.append("qc.min_length, qc.max_length, and qc.min_plddt must be numeric")
+        return errors, warns, info
+    if min_length < 1 or max_length < 1:
+        errors.append("QC protein-length limits must be at least 1 aa")
+    if min_length > max_length:
+        errors.append("qc.min_length cannot exceed qc.max_length")
+    if not 0 <= min_plddt <= 100:
+        errors.append("qc.min_plddt must be between 0 and 100")
+    if min_length < 40:
+        warns.append(
+            "qc.min_length is below 40 aa; very short chains can have less "
+            "discriminating TM-scores"
+        )
+
     # ---- structures (required) ----
     pdbs = glob.glob(os.path.join(pdb_dir, "*.pdb"))
     info["n_structures"] = len(pdbs)
@@ -39,9 +59,12 @@ def validate(cfg):
     if no_ca:
         errors.append(f"{len(no_ca)} PDBs have no CA atoms (empty/corrupt): e.g. {no_ca[:3]}")
     if lens:
-        over = [l for l in lens if l > cfg['qc']['max_length']]
+        under = [l for l in lens if l < min_length]
+        over = [l for l in lens if l > max_length]
+        if under: warns.append(f"{len(under)} structures are shorter than min_length "
+                               f"{min_length} aa (will fail QC)")
         if over: warns.append(f"{len(over)} structures exceed max_length "
-                              f"{cfg['qc']['max_length']} aa (will fail QC)")
+                              f"{max_length} aa (will fail QC)")
         info["length_range"] = [min(lens), max(lens)]
     if strain and pdbs and not any(os.path.basename(p).startswith(strain + "_") for p in pdbs[:50]):
         warns.append(f"no PDB filename starts with strain prefix '{strain}_' "

@@ -122,8 +122,8 @@ a{color:var(--cyan);text-decoration-color:#82ddf655;text-underline-offset:3px}a:
 fieldset{min-width:0;border:1px solid var(--line);border-radius:2px;margin:0 0 14px;padding:17px 18px 19px;background:var(--panel)}
 legend{padding:0 8px 0 0;color:var(--ink);font:500 17px var(--serif)}legend .step{margin-right:9px;color:var(--cyan);font:9px var(--mono);letter-spacing:.08em;vertical-align:2px}
 label{display:block;margin:10px 0 5px;color:#d0cec7;font-size:12px}.hint{color:var(--muted);font-size:11px;line-height:1.5}
-input[type=text],select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:2px;background:#121315;color:var(--ink);font:12px var(--sans)}
-input[type=text]:focus,select:focus,input[type=file]:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-color:var(--cyan)}
+input[type=text],input[type=number],select{width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:2px;background:#121315;color:var(--ink);font:12px var(--sans)}
+input[type=text]:focus,input[type=number]:focus,select:focus,input[type=file]:focus-visible{outline:2px solid var(--cyan);outline-offset:1px;border-color:var(--cyan)}
 input[type=file]{width:100%;margin:3px 0 5px;padding:7px;border:1px solid var(--line);background:#151619;color:var(--muted);font:10px var(--mono)}input[type=file]::file-selector-button{margin-right:10px;padding:7px 10px;border:1px solid #52606a;border-radius:1px;background:#24282d;color:var(--ink);font:9px var(--mono);letter-spacing:.04em;text-transform:uppercase;cursor:pointer}
 input[type=checkbox],input[type=radio]{accent-color:#70cfe9}.row{display:flex;gap:14px}.row>div{flex:1;min-width:0}
 .toggles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.toggles label{display:flex;align-items:flex-start;gap:8px;margin:0;padding:9px 10px;border:1px solid #2e3035;background:#17181b;font-size:11px;line-height:1.4;cursor:pointer}.toggles label:has(input:checked){border-color:#527889;background:#182126;color:#edfaff}.toggles input{margin:2px 0 0;flex:none}.scope-options{grid-template-columns:1fr}.scope-options label{min-height:42px;align-items:center}
@@ -219,6 +219,14 @@ def form_page(msg_html=""):
         <div class=rng><input type=range name=res min=0.6 max=1.6 step=0.1 value=1.0 oninput="this.nextElementSibling.textContent=this.value"><b>1.0</b></div>
         <label>Min family size</label>
         <div class=rng><input type=range name=minfam min=2 max=5 step=1 value=2 oninput="this.nextElementSibling.textContent=this.value"><b>2</b></div>
+        <label>Accepted mature protein length <span class=hint>measured from structure CA residues</span></label>
+        <div class=row>
+          <div><label>Minimum (aa)</label><input type=number name=min_length min=1 max=10000 step=1 value=50 required></div>
+          <div><label>Maximum (aa)</label><input type=number name=max_length min=1 max=10000 step=1 value=1000 required></div>
+        </div>
+        <div class=hint style="margin:3px 0 8px">Lower the minimum to retain short secreted proteins. Very short chains can produce less discriminating TM-scores, so report this cutoff with the atlas.</div>
+        <label>Minimum mean pLDDT <span class=hint>structure-confidence QC</span></label>
+        <input type=number name=min_plddt min=0 max=100 step=0.1 value=50 required>
         <label>BLAST e-value (10^x)</label>
         <div class=rng><input type=range name=eexp min=-6 max=-1 step=1 value=-3 oninput="this.nextElementSibling.textContent='1e'+this.value"><b>1e-3</b></div>
         <label>Minimum reciprocal sequence coverage</label>
@@ -277,6 +285,9 @@ def _params_block(j):
         ("P2Rank structure profile", m.get("p2rank_profile", "alphafold")),
         ("Leiden resolution", m.get("res")),
         ("Min family size", m.get("minfam")),
+        ("Minimum protein length (aa)", m.get("min_length", 50)),
+        ("Maximum protein length (aa)", m.get("max_length", 1000)),
+        ("Minimum mean pLDDT", m.get("min_plddt", 50)),
         ("BLAST e-value", m.get("evalue")),
         ("Reciprocal sequence coverage", m.get("blast_coverage")),
         ("Domain e-value", m.get("domain_evalue")),
@@ -508,6 +519,11 @@ def help_page():
           full-length F-family edge is accepted.</li>
       <li><b>Leiden resolution</b> (1.0) — clustering granularity. Higher = more, smaller families.</li>
       <li><b>Min family size</b> (2) — smallest cluster kept as a family; singletons are set aside.</li>
+      <li><b>Accepted mature protein length</b> (50–1000 aa) — QC counts CA residues in each
+          uploaded mature structure. Lower the minimum when short secreted proteins are biologically relevant.
+          Chains below roughly 40 aa can have less discriminating TM-scores, so preserve and report the chosen cutoff.</li>
+      <li><b>Minimum mean pLDDT</b> (50) — excludes low-confidence predicted structures independently
+          of the protein-length limits.</li>
       <li><b>BLAST e-value</b> (1e-3) — sequence-homology sensitivity used only to <i>label</i> divergence
           (core_SUSS / diverged / moderate / recent). It never splits a structural family.</li>
       <li><b>Reciprocal sequence coverage</b> (0.5) — both proteins must have sufficient BLAST alignment coverage
@@ -728,6 +744,29 @@ def _ensure_engine_config(eng):
     return config_path, True
 
 
+def _parse_qc_settings(value_for):
+    """Parse and validate user-facing structure QC settings."""
+    try:
+        min_length = int(value_for("min_length", "50"))
+        max_length = int(value_for("max_length", "1000"))
+        min_plddt = float(value_for("min_plddt", "50"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("QC length and pLDDT values must be numeric") from exc
+    if not 1 <= min_length <= 10000:
+        raise ValueError("Minimum protein length must be between 1 and 10,000 aa")
+    if not 1 <= max_length <= 10000:
+        raise ValueError("Maximum protein length must be between 1 and 10,000 aa")
+    if min_length > max_length:
+        raise ValueError("Minimum protein length cannot exceed maximum protein length")
+    if not 0 <= min_plddt <= 100:
+        raise ValueError("Minimum mean pLDDT must be between 0 and 100")
+    return {
+        "min_length": min_length,
+        "max_length": max_length,
+        "min_plddt": min_plddt,
+    }
+
+
 def _write_config(eng, meta):
     """Overlay the user's choices onto the engine's SHIPPED config.yaml (which carries all
     tool paths, the signals block, and other locked defaults) and write it back. Overwriting
@@ -755,6 +794,10 @@ def _write_config(eng, meta):
     cfg.setdefault("classification", {}).update(
         blast_evalue=meta["evalue"],
         min_reciprocal_coverage=meta["blast_coverage"])
+    cfg.setdefault("qc", {}).update(
+        min_plddt=meta["min_plddt"],
+        min_length=meta["min_length"],
+        max_length=meta["max_length"])
     cfg.setdefault("pocket", {}).update(
         p2rank_profile=meta.get("p2rank_profile", "alphafold"))
     st = cfg.setdefault("steps", {})
@@ -1113,6 +1156,13 @@ class H(BaseHTTPRequestHandler):
         analysis_scope = _field(form, "analysis_scope", "both")
         if analysis_scope not in ("full", "domain", "both"):
             analysis_scope = "both"
+        try:
+            qc_settings = _parse_qc_settings(
+                lambda name, default: _field(form, name, default)
+            )
+        except ValueError as exc:
+            self._send(form_page(f"<div class=err>{html.escape(str(exc))}</div>"))
+            return
         meta = dict(
             code=re.sub(r"[^A-Za-z0-9_]", "", _field(form, "code", "strain") or "strain"),
             species=_field(form, "species", ""),
@@ -1122,6 +1172,7 @@ class H(BaseHTTPRequestHandler):
             coverage=float(_field(form, "coverage", "0.5")),
             res=float(_field(form, "res", "1.0")),
             minfam=int(_field(form, "minfam", "2")),
+            **qc_settings,
             evalue=10 ** int(_field(form, "eexp", "-3")),
             blast_coverage=float(_field(form, "blast_coverage", "0.5")),
             domain_evalue=10 ** int(_field(form, "domain_eexp", "-3")),

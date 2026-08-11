@@ -22,6 +22,13 @@ Then edit `config/config.yaml`:
 and defaults to `both`. A domain-only run retains the lightweight full-family mapping needed to
 explain each segment's parent, but hides the F-family overview from the delivered atlas.
 
+`qc.min_length` and `qc.max_length` define the accepted mature-protein length in amino acids,
+counted from CA residues in each uploaded structure. `qc.min_plddt` independently sets the mean
+AlphaFold-confidence threshold. The portal exposes all three values and records them in the run
+manifest and effective config. Lower `min_length` when short secreted proteins are relevant, but
+interpret very short-chain TM-scores cautiously and report the chosen cutoff in publications.
+Both full-length and domain Foldseek searches use the same QC-passing structure set.
+
 `signals.foldtree_rooting` controls structural-tree rooting. Families with at most
 `small_family_max` members use midpoint rooting directly. Larger families use MAD first and
 fall back to midpoint rooting only when MAD output is missing or invalid. Every family records

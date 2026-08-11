@@ -9,7 +9,11 @@ from v3_utils import domain_sequence_records, fasta_records, write_fasta
 
 members = pd.read_csv(snakemake.input.members)
 parents = fasta_records(snakemake.input.seqs)
-records, manifest = domain_sequence_records(members, parents)
+records, manifest = domain_sequence_records(
+    members,
+    parents,
+    skip_missing_parents=True,
+)
 
 fasta_path = Path(snakemake.output.fasta)
 manifest_path = Path(snakemake.output.manifest)

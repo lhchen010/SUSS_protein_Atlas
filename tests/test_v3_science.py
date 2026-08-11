@@ -401,6 +401,37 @@ def test_domain_sequences_are_cropped_and_keep_exact_segment_ids():
     assert manifest.set_index("segment_id").loc["A:2-5", "parent_length"] == 7
 
 
+def test_domain_sequences_can_warn_and_skip_a_missing_parent_defensively():
+    members = pd.DataFrame(
+        [
+            {
+                "domain_family": "D0",
+                "segment_id": "A:2-5",
+                "acc": "A",
+                "start": 2,
+                "end": 5,
+            },
+            {
+                "domain_family": "D0",
+                "segment_id": "MISSING:1-3",
+                "acc": "MISSING",
+                "start": 1,
+                "end": 3,
+            },
+        ]
+    )
+
+    with pytest.warns(RuntimeWarning, match="parent sequence MISSING is missing"):
+        records, manifest = domain_sequence_records(
+            members,
+            {"A": "ABCDEFG"},
+            skip_missing_parents=True,
+        )
+
+    assert records == {"A:2-5": "BCDE"}
+    assert manifest.acc.tolist() == ["A"]
+
+
 def test_same_parent_domain_segments_are_not_related_without_segment_hit():
     components = relationship_components(
         ["A:1-50", "A:100-150", "B:5-55"],

@@ -1028,6 +1028,19 @@ def test_portal_and_atlas_share_the_scientific_console_visual_contract():
     assert "@media(max-width:700px)" in prefix
 
 
+def test_portal_exposes_qc_length_controls_and_foldseek_uses_qc_only():
+    portal = (ROOT / "portal" / "suss_portal.py").read_text()
+    snakefile = (ROOT / "workflow" / "Snakefile").read_text()
+
+    assert 'name=min_length min=1 max=10000' in portal
+    assert 'name=max_length min=1 max=10000' in portal
+    assert 'name=min_plddt min=0 max=100' in portal
+    assert 'cfg.setdefault("qc", {}).update(' in portal
+    assert "rule qc_structures:" in snakefile
+    assert snakefile.count('pdb_dir=f"{RESULTS}/qc_pdb"') == 2
+    assert "easy-search {input.pdb_dir} {input.pdb_dir}" in snakefile
+
+
 def test_domain_sequence_search_is_a_declared_independent_workflow():
     snakefile = (ROOT / "workflow" / "Snakefile").read_text()
 

@@ -69,8 +69,15 @@ rule qc:
             min_length=config["qc"]["min_length"]
     script: "scripts/qc.py"
 
+rule qc_structures:
+    input: qc=f"{RESULTS}/qc.csv", pdb_dir=PDB_DIR
+    output:
+        pdb_dir=directory(f"{RESULTS}/qc_pdb"),
+        manifest=f"{RESULTS}/qc_pdb_manifest.csv"
+    script: "scripts/stage_qc_structures.py"
+
 rule foldseek:
-    input:  qc=f"{RESULTS}/qc.csv", pdb_dir=PDB_DIR
+    input:  pdb_dir=f"{RESULTS}/qc_pdb"
     output: tsv=f"{RESULTS}/foldseek_allvsall.tsv"
     params: bin=TOOLS["foldseek"],
             alignment_type=config["clustering"].get("alignment_type", 1),
@@ -92,7 +99,7 @@ rule foldseek:
         "--max-seqs {params.max_seqs} --threads {threads}"
 
 rule foldseek_domains:
-    input: qc=f"{RESULTS}/qc.csv", pdb_dir=PDB_DIR
+    input: pdb_dir=f"{RESULTS}/qc_pdb"
     output: tsv=f"{RESULTS}/foldseek_domain_allvsall.tsv"
     params:
         bin=TOOLS["foldseek"],

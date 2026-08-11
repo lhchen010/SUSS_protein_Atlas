@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import csv
 import os
+import shutil
 from pathlib import Path
 from shutil import which
 
@@ -60,3 +62,40 @@ def novel_call(has_domain: bool, has_known_fold: bool, evidence_complete: bool) 
     if not evidence_complete:
         return None
     return not has_domain and not has_known_fold
+
+
+def stage_qc_structures(
+    qc_csv: str | os.PathLike,
+    pdb_dir: str | os.PathLike,
+    output_dir: str | os.PathLike,
+) -> list[str]:
+    """Hard-link or copy exactly the QC-passing PDB files into a search directory."""
+    source_dir = Path(pdb_dir)
+    destination = Path(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
+    staged: list[str] = []
+    with Path(qc_csv).open(newline="", encoding="utf-8") as handle:
+        rows = csv.DictReader(handle)
+        if not rows.fieldnames or not {"fn", "pass"}.issubset(rows.fieldnames):
+            raise ValueError("QC table must contain fn and pass columns")
+        for row in rows:
+            if str(row.get("pass", "")).strip().lower() not in {"true", "1", "yes"}:
+                continue
+            filename = Path(str(row["fn"])).name
+            source = source_dir / filename
+            if not source.is_file():
+                raise FileNotFoundError(f"QC-passing structure is missing: {source}")
+            target = destination / filename
+            if target.exists():
+                raise ValueError(f"duplicate QC structure filename: {filename}")
+            try:
+                os.link(source, target)
+            except OSError:
+                shutil.copy2(source, target)
+            staged.append(filename)
+    if not staged:
+        raise ValueError(
+            "No structures passed QC; adjust qc.min_length, qc.max_length, or "
+            "qc.min_plddt and rerun"
+        )
+    return sorted(staged)
