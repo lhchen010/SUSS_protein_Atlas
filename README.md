@@ -27,6 +27,10 @@ structure, RNA-seq, annotation, sequence, database hits, pockets, and the audita
 diagnostic. Annotation tables and the main/detail view controls now adapt to narrow or resized
 panels without hiding evidence fields.
 
+Version 5.2.5 makes the full-length singleton and domain-unassigned evidence lists responsive.
+Narrow panels use complete two-column or one-column record layouts instead of clipping table
+cells, while `EffectorP`, `TMR`, `pLDDT`, and protein length remain independent sortable fields.
+
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
 > e-value. BLAST labels divergence; it never splits a structure-defined family.

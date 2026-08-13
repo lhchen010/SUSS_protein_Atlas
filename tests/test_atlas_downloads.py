@@ -1066,6 +1066,32 @@ def test_detail_view_collapse_overrides_drag_width_and_resizes_views():
     assert '>Hide detail view</button>' in prefix
 
 
+def test_protein_list_tables_split_evidence_and_preserve_narrow_fields():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text()
+    prefix = (
+        ROOT / "workflow" / "builders" / "template" / "prefix.html"
+    ).read_text()
+
+    assert 'singletonHeader("EffectorP","eff")' in renderer
+    assert 'singletonHeader("TMR","tmr")' in renderer
+    assert 'singletonHeader("pLDDT","plddt")' in renderer
+    assert 'singletonHeader("Length","length")' in renderer
+    assert 'domainUnassignedHeader("EffectorP","eff")' in renderer
+    assert 'domainUnassignedHeader("TMR","tmr")' in renderer
+    assert 'domainUnassignedHeader("pLDDT","plddt")' in renderer
+    assert 'domainUnassignedHeader("Length","length")' in renderer
+    assert 'singletonHeader("Effector / TMR"' not in renderer
+    assert 'singletonHeader("pLDDT / length"' not in renderer
+    assert 'function evidenceCell(label,content,className)' in renderer
+    assert "return'<td data-label=\"'+esc(label)" in renderer
+    assert ".singleton-table-wrap{container-type:inline-size" in prefix
+    assert "@container (max-width:900px)" in prefix
+    assert "overflow:visible;text-overflow:clip" in prefix
+    assert ".singleton-table tbody td:before{content:attr(data-label)" in prefix
+
+
 def test_portal_exposes_qc_length_controls_and_foldseek_uses_qc_only():
     portal = (ROOT / "portal" / "suss_portal.py").read_text()
     snakefile = (ROOT / "workflow" / "Snakefile").read_text()
