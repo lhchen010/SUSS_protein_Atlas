@@ -7,15 +7,18 @@
 #title{padding:9px 16px;background:#2a6b8a;color:#fff;font-size:14px}
 #wrap{display:flex;flex:1;min-height:0}
 #primary{flex:1;border-right:1px solid #ddd;background:#fbfbfb;min-width:0;position:relative;overflow:hidden}
-#net,#singletons,#domains{width:100%;height:100%}
-#singletons{overflow:auto;padding:12px 14px;background:#f8fafb}
+#net,#singletons,#domains,#unassigned{width:100%;height:100%}
+#singletons,#unassigned{overflow:auto;padding:12px 14px;background:#f8fafb}
 #domains{background:#f8fafb}
 #primary.collapsed{flex:none;width:0;border:none;overflow:hidden}
 .mode-hidden{display:none!important}
 #divider{width:6px;cursor:col-resize;background:#e0e0e0;flex:none}
 #divider:hover{background:#2a6b8a}
 #side{width:520px;flex:none;overflow-y:auto;padding:12px 15px;background:#fff}
-#side.collapsed{width:0;padding:0;overflow:hidden}
+#side.collapsed{width:0!important;min-width:0!important;padding:0;overflow:hidden;border-left:0}
+#wrap.detail-collapsed #divider,#wrap.primary-collapsed #divider{display:none}
+#wrap.detail-collapsed #primary{flex:1 1 auto}
+#wrap.primary-collapsed #side:not(.collapsed){flex:1 1 auto;width:auto!important;min-width:0!important}
 #viewbar{padding:4px 16px;background:#f0f4f6;border-bottom:1px solid #ddd;font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 #viewbar button{font-size:11px;padding:2px 8px;margin-right:5px}
 .viewgroup{display:flex;align-items:center;gap:3px;white-space:nowrap}
@@ -46,6 +49,7 @@ table{border-collapse:collapse;width:100%;font-size:12.5px}td{padding:3px 6px;bo
 .domain-summary{display:grid;grid-template-columns:repeat(3,minmax(90px,1fr));gap:6px;margin:9px 0}.domain-stat{border-left:3px solid #2a6b8a;padding:4px 7px;background:#f5f8fa;font-size:11px}.domain-stat b{display:block;font-size:16px;color:#203c49}
 #domainSegmentNet{height:320px;border:1px solid #d7e0e4;background:#fbfcfd;margin:7px 0}
 #domain3d{width:100%;height:360px;border:1px solid #d7e0e4;background:#fff;position:relative;margin:7px 0}
+#domainDiag3d{width:100%;height:360px;border:1px solid #4a4d53;background:#fff;position:relative;margin:7px 0}
 #dp0.on{display:flex;flex-direction:column}#dp0>.domain-toolbar{order:0}#dp0>#domain3d{order:1}#dp0>#domainPosition{order:2}#dp0>#domainLegend{order:3}#dp0>.domain-selection{order:4}#dp0>.domain-downloads{order:5}#dp0>*{order:10}
 .domain-evidence{border-top:1px solid #dce3e7;margin-top:9px;padding-top:2px}.domain-tags{display:flex;gap:4px;flex-wrap:wrap;margin:5px 0}.domain-tag{border:1px solid #9bb6c2;background:#edf6f8;border-radius:4px;padding:2px 6px;font-size:11px}.domain-actions{display:flex;gap:3px;flex-wrap:wrap;margin:7px 0}
 .domain-toolbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin:6px 0}.domain-toolbar select{max-width:240px;height:29px}
@@ -58,6 +62,7 @@ table{border-collapse:collapse;width:100%;font-size:12.5px}td{padding:3px 6px;bo
 .status-pill.borderline{background:#fff0d5;color:#7a5100}.status-pill.filtered{background:#e7edf0;color:#40525b}.status-pill.none{background:#f1f2f3;color:#6a7276}
 .domain-diagnostic-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:7px}.domain-diagnostic-summary span{font-size:11px;color:#4d6069}
 .domain-hit-scores{white-space:nowrap;line-height:1.45}.domain-filter-reason{color:#8a4f18;line-height:1.4}
+.rna-value{width:150px;max-width:100%;height:8px;background:#303338}.rna-value span{display:block;height:100%;background:#82ddf6}
 .pager{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:7px;font-size:11px;color:#5c6a72}
 button{padding:5px 10px;border:1px solid #bbb;background:#fff;border-radius:5px;cursor:pointer;font-size:12px;margin:2px}
 button.on{background:#2a6b8a;color:#fff;border-color:#2a6b8a}
@@ -87,8 +92,8 @@ svg .branch:hover{stroke:#e67e22 !important;stroke-width:3px !important}
  #searchstatus{flex:1 0 100%;min-width:0;white-space:normal;padding-left:2px}
  #wrap{display:block;overflow-y:auto}
  #primary{width:100%;height:52vh;min-height:300px;border-right:0;border-bottom:1px solid #ddd}
- #net,#singletons,#domains{width:100%;height:100%}
- #singletons{padding:9px}
+ #net,#singletons,#domains,#unassigned{width:100%;height:100%}
+ #singletons,#unassigned{padding:9px}
  .domain-summary{grid-template-columns:repeat(2,minmax(90px,1fr))}
  .domain-selection-list{grid-template-columns:1fr}
  .domain-choice{grid-template-columns:18px minmax(100px,1fr) minmax(75px,1fr)}
@@ -147,7 +152,7 @@ button.on,#viewbar button.on{border-color:var(--s-cyan);background:#18303a;color
 .domain-tabs{border-color:#65573b;background:#65573b;overflow:visible;white-space:normal}.domain-tabs .tab.on{background:var(--s-amber);color:#17130c;box-shadow:inset 0 -2px 0 #f8ddaa}
 a.dl{border:1px solid #488066;border-radius:2px;background:#192821;color:#8fe7bd;font:9px var(--s-mono);letter-spacing:.04em;text-transform:uppercase}
 a.dl:hover{background:#20362b;color:#c4f6da}
-#v3d,#domain3d{border:1px solid #4a4d53;border-radius:2px;background:#fff;box-shadow:0 8px 24px #0004}
+#v3d,#domain3d,#domainDiag3d{border:1px solid #4a4d53;border-radius:2px;background:#fff;box-shadow:0 8px 24px #0004}
 #treebox{border:1px solid #35373c;border-radius:2px;background:#f8f8f6}
 .pane img,.tree-block img{border:1px solid #3d4045;border-radius:2px;background:#fff}
 .sequence-view{border:1px solid #3b3e43;border-radius:2px;background:#111214;color:#d8e1e5;font:10px/1.55 var(--s-mono)}
@@ -161,11 +166,12 @@ a.dl:hover{background:#20362b;color:#c4f6da}
 .domain-selection,.domain-downloads{border:1px solid #34363b;background:#17181b}
 .dlbar{margin-top:8px;padding:9px 10px;border:1px solid #34363b;border-radius:2px;background:#17181b;color:var(--s-ink)}
 .dlbar>b{color:#f1eee7}.dlbar .hint{color:var(--s-muted)}
-.annotation-table-wrap{max-height:340px;overflow:auto;border:1px solid #34363b;background:#141517}
-#side .annotation-table{min-width:780px;border:0;background:#17181b;font-size:11px}
-#side .annotation-table th{position:sticky;top:0;z-index:1;padding:7px 8px;border-bottom:1px solid #484b51;background:#202226;color:#f1eee7;font:8px/1.25 var(--s-mono);letter-spacing:.035em;text-align:left;text-transform:uppercase;white-space:nowrap}
-#side .annotation-table td{width:auto;background:#17181b;color:#d5d2cb;vertical-align:top}
+.annotation-table-wrap{container-type:inline-size;width:100%;max-width:100%;max-height:340px;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid #34363b;background:#141517}
+#side .annotation-table{width:100%;min-width:0;table-layout:fixed;border:0;background:#17181b;font-size:11px}
+#side .annotation-table th{position:sticky;top:0;z-index:1;padding:7px 6px;border-bottom:1px solid #484b51;background:#202226;color:#f1eee7;font:8px/1.25 var(--s-mono);letter-spacing:.035em;text-align:left;text-transform:uppercase;white-space:normal;overflow-wrap:anywhere}
+#side .annotation-table td{width:auto;background:#17181b;color:#d5d2cb;vertical-align:top;overflow-wrap:anywhere}
 #side .annotation-table td:first-child{width:auto;color:#c9eaf2}#side .annotation-table tbody tr:nth-child(even) td{background:#1a1b1e}
+@container (max-width:460px){#side .annotation-table{display:block;width:100%;min-width:0}#side .annotation-table thead{display:none}#side .annotation-table tbody,#side .annotation-table tr,#side .annotation-table td{display:block;width:100%;max-width:none}#side .annotation-table tr{padding:6px 0;border-bottom:1px solid #3a3c41}#side .annotation-table tr:last-child{border-bottom:0}#side .annotation-table td{display:grid;grid-template-columns:minmax(105px,34%) minmax(0,1fr);gap:8px;padding:5px 8px;border:0;overflow-wrap:anywhere}#side .annotation-table td:before{content:attr(data-label);color:#8f9399;font:8px/1.35 var(--s-mono);letter-spacing:.035em;text-transform:uppercase}#side .annotation-table td:first-child{width:100%;background:#202226!important}}
 .domain-choice.focus{background:#203038}.domain-architecture{background:#3a3c40}.domain-position,.domain-superpose-legend{color:#9a9da2}
 .domain-edge-table{border:1px solid #35373c}.domain-edge-table th{background:#202226;color:#aeb2b6;font:8px var(--s-mono);letter-spacing:.05em;text-transform:uppercase}.domain-edge-table td{background:#17181a;color:#d4d1ca;border-color:#2d2f33}
 .domain-tag{border:1px solid #4a5d66;border-radius:2px;background:#1c2a30;color:#b9e9f5;font:9px var(--s-mono)}
@@ -182,11 +188,12 @@ a.dl:hover{background:#20362b;color:#c4f6da}
 svg text{font-family:var(--s-mono)!important;letter-spacing:0}
 .vis-tooltip{border:1px solid #52555b!important;border-radius:2px!important;background:#151619!important;color:#e8e5de!important;font:10px var(--s-mono)!important;box-shadow:0 8px 26px #0006!important}
 @media(max-width:900px){#title:after{display:none}#side{width:48vw;min-width:420px}}
-@media(max-width:700px){#title{min-height:46px;padding:9px 12px;font-size:15px}#viewbar{padding:7px 8px}.analysis-nav{gap:4px}.analysis-axes button,.mode-tabs button{min-height:29px;padding:5px 7px}#primary{background:var(--s-paper);border-bottom:1px solid var(--s-line)}#side{width:100%;min-width:0;padding:15px 12px;background:var(--s-panel)}#divider{display:none}.domain-summary{grid-template-columns:repeat(2,minmax(90px,1fr))}}
+@media(max-width:700px){#title{min-height:46px;padding:9px 12px;font-size:15px}#viewbar{padding:7px 8px}.analysis-nav{gap:4px}.analysis-axes button,.mode-tabs button{min-height:29px;padding:5px 7px}#primary{background:var(--s-paper);border-bottom:1px solid var(--s-line)}#side{width:100%;min-width:0;padding:15px 12px;background:var(--s-panel)}#divider{display:none}.domain-summary{grid-template-columns:repeat(2,minmax(90px,1fr))}#wrap.detail-collapsed #primary{height:100%;min-height:100%}#wrap.primary-collapsed #side:not(.collapsed){height:100%;min-height:100%;overflow:auto}}
 </style></head><body>
 <div id="title">__ATLAS_TITLE__</div>
-<div id="viewbar"><div class="analysis-nav"><span class="analysis-axes"><button id="scopefull" class="on" onclick="setAnalysisAxis('full')">Full-length analysis</button><button id="scopedomain" onclick="setAnalysisAxis('domain')">Domain analysis</button></span><span class="axis-divider"></span><span id="fullModeTabs" class="mode-tabs"><button id="modeclusters" class="on" onclick="setAtlasMode('clusters')">Families</button><button id="modesingletons" onclick="setAtlasMode('singletons')">Singletons</button></span><span id="domainModeTabs" class="mode-tabs domain-axis mode-hidden"><button id="modedomains" onclick="setAtlasMode('domains')">Families</button><button id="modeunassigned" onclick="setAtlasMode('unassigned')">Unassigned / filtered</button></span></div><span class="viewgroup"><button id="tgprimary" onclick="toggleView('primary')" title="Show or hide the current main view">Hide main view</button><button id="tgside" onclick="toggleView('side')">Hide detail panel</button></span><span class="viewgroup"><b>Download:</b> <button id="dlclustered" onclick="dlSummary('clustered')" title="One row per full-length family">Families CSV</button><button id="dlsingletons" onclick="dlSummary('singletons')" title="One row per singleton">Singleton CSV</button></span><div id="netsearch" title="Search all fields or use gene:, annotation:, effectorp:, tmr:, pdb:, afdb:, novel:"><input id="searchinput" type="search" autocomplete="off" spellcheck="false" placeholder="Search full-length families" aria-label="Search atlas"><button id="clearsearch" type="button" title="Clear search" aria-label="Clear search">&times;</button><span id="searchstatus" aria-live="polite"></span></div></div><div id="wrap"><div id="primary"><div id="net"></div><div id="domains" class="mode-hidden"></div><div id="unassigned" class="mode-hidden"></div><div id="singletons" class="mode-hidden"></div></div><div id="divider"></div><div id="side"><p class="hint">Select a full-length family, domain family, or singleton.</p></div></div>
+<div id="viewbar"><div class="analysis-nav"><span class="analysis-axes"><button id="scopefull" class="on" onclick="setAnalysisAxis('full')">Full-length analysis</button><button id="scopedomain" onclick="setAnalysisAxis('domain')">Domain analysis</button></span><span class="axis-divider"></span><span id="fullModeTabs" class="mode-tabs"><button id="modeclusters" class="on" onclick="setAtlasMode('clusters')">Families</button><button id="modesingletons" onclick="setAtlasMode('singletons')">Singletons</button></span><span id="domainModeTabs" class="mode-tabs domain-axis mode-hidden"><button id="modedomains" onclick="setAtlasMode('domains')">Families</button><button id="modeunassigned" onclick="setAtlasMode('unassigned')">Unassigned / filtered</button></span></div><span class="viewgroup"><button id="tgprimary" onclick="toggleView('primary')" title="Show or hide the current main view" aria-pressed="false">Hide main view</button><button id="tgside" onclick="toggleView('side')" title="Show or hide the detail view" aria-pressed="false">Hide detail view</button></span><span class="viewgroup"><b>Download:</b> <button id="dlclustered" onclick="dlSummary('clustered')" title="One row per full-length family">Families CSV</button><button id="dlsingletons" onclick="dlSummary('singletons')" title="One row per singleton">Singleton CSV</button></span><div id="netsearch" title="Search all fields or use gene:, annotation:, effectorp:, tmr:, pdb:, afdb:, novel:"><input id="searchinput" type="search" autocomplete="off" spellcheck="false" placeholder="Search full-length families" aria-label="Search atlas"><button id="clearsearch" type="button" title="Clear search" aria-label="Clear search">&times;</button><span id="searchstatus" aria-live="polite"></span></div></div><div id="wrap"><div id="primary"><div id="net"></div><div id="domains" class="mode-hidden"></div><div id="unassigned" class="mode-hidden"></div><div id="singletons" class="mode-hidden"></div></div><div id="divider"></div><div id="side"><p class="hint">Select a full-length family, domain family, or singleton.</p></div></div>
 <script>
-function toggleView(w){var el=document.getElementById(w);var b=document.getElementById("tg"+w);var col=el.classList.toggle("collapsed");if(b)b.textContent=(col?"Show ":"Hide ")+(w==="primary"?"main view":"detail panel");if(w==="primary"&&!col){setTimeout(function(){if(typeof network!=="undefined"&&network){network.redraw();network.fit();}if(typeof domainNetwork!=="undefined"&&domainNetwork){domainNetwork.redraw();domainNetwork.fit();}},60);}}
+function resizeAtlasViews(){if(typeof network!=="undefined"&&network){network.redraw();network.fit();}if(typeof domainNetwork!=="undefined"&&domainNetwork){domainNetwork.redraw();domainNetwork.fit();}if(typeof domainSegmentNetwork!=="undefined"&&domainSegmentNetwork)domainSegmentNetwork.redraw();if(typeof glviewer!=="undefined"&&glviewer)glviewer.resize();if(typeof domainViewer!=="undefined"&&domainViewer)domainViewer.resize();if(typeof domainDiagnosticViewer!=="undefined"&&domainDiagnosticViewer)domainDiagnosticViewer.resize();}
+function toggleView(w){var el=document.getElementById(w),wrap=document.getElementById("wrap"),b=document.getElementById("tg"+w);if(!el||!wrap)return;var col=el.classList.toggle("collapsed"),stateClass=w==="primary"?"primary-collapsed":"detail-collapsed";wrap.classList.toggle(stateClass,col);if(b){b.textContent=(col?"Show ":"Hide ")+(w==="primary"?"main view":"detail view");b.setAttribute("aria-pressed",col?"true":"false");}setTimeout(resizeAtlasViews,60);}
 (function(){var dragging=false;document.addEventListener("mousedown",function(e){if(e.target&&e.target.id==="divider"){dragging=true;e.preventDefault();}});document.addEventListener("mousemove",function(e){if(!dragging)return;var wrap=document.getElementById("wrap");var side=document.getElementById("side");var rect=wrap.getBoundingClientRect();var w=rect.right-e.clientX;if(w<120)w=120;if(w>rect.width-120)w=rect.width-120;side.style.width=w+"px";});document.addEventListener("mouseup",function(){if(dragging){dragging=false;if(typeof network!=="undefined"&&network){network.redraw();network.fit();}}});})();
 var D=

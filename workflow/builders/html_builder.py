@@ -2787,6 +2787,10 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 _annotation_payload(pd.DataFrame([annotation_row]))
                 if annotation_row is not None else None
             )
+            member_annotation = (
+                annotation_payload.get("members", [{}])[0]
+                if annotation_payload else {}
+            )
             expression_values = {}
             if expression_all is not None and "acc" in expression_all.columns:
                 match = expression_all[
@@ -2799,6 +2803,12 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                         if column != "acc"
                         and (number := _finite_float(value)) is not None
                     }
+            peak_condition = None
+            peak_expression = None
+            if expression_values:
+                peak_condition, peak_expression = max(
+                    expression_values.items(), key=lambda item: item[1]
+                )
             pocket_entry = _enrich_pocket_entry(
                 results_dir, accession, pockets.get(accession, {})
             )
@@ -2812,14 +2822,38 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                     annotation_payload.get("label", "annotation unavailable")
                     if annotation_payload else "annotation unavailable"
                 ),
+                "gene": member_annotation.get("gene", ""),
+                "eff": member_annotation.get("eff", ""),
+                "tmr": member_annotation.get("tm", 0),
+                "novel": member_annotation.get("novel"),
+                "pfam": member_annotation.get("pfam", ""),
+                "ipr": member_annotation.get("ipr", ""),
+                "pdb": member_annotation.get("pdb", ""),
+                "pdb_tm": member_annotation.get("pdb_tm"),
+                "afdb": member_annotation.get("afdb", ""),
+                "afdb_hit": member_annotation.get("afdb_hit", ""),
+                "afdb_tm": member_annotation.get("afdb_tm"),
+                "annotation_status": member_annotation.get(
+                    "annotation_status", ""
+                ),
+                "foldseek_pdb_status": member_annotation.get(
+                    "foldseek_pdb_status", ""
+                ),
+                "foldseek_afdb_status": member_annotation.get(
+                    "foldseek_afdb_status", ""
+                ),
                 "plddt": _finite_float(row.get("plddt")),
                 "length": int(row.length) if pd.notna(row.get("length")) else None,
+                "p2rank_resi": p2rank.get("lining_residues", []),
                 "p2rank_score": _finite_float(p2rank.get("top_score")),
                 "p2rank_probability": _finite_float(
                     p2rank.get("top_probability")
                 ),
+                "fpocket_resi": fpocket.get("lining_residues", []),
                 "fpocket_score": _finite_float(fpocket.get("top_score")),
                 "expression": expression_values,
+                "rna_condition": peak_condition,
+                "rna_peak": peak_expression,
                 "domain_status": (
                     str(diagnostic.status)
                     if diagnostic is not None else "diagnostic_unavailable"
