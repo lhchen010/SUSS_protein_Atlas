@@ -10,7 +10,7 @@ structurally similar protein families in secreted effector repertoires.**
 SUSS Protein Atlas starts from predicted protein structures for one strain, builds
 structure-defined families, labels their sequence-divergence spectrum, and integrates independent
 structural validation, conservation, pockets, mutational tolerance, phylogeny, annotation, and
-optional expression into an interactive atlas. Version 5.1 separates three questions that should
+optional expression into an interactive atlas. Version 5.2 separates three questions that should
 not be collapsed into one clustering label: full-length fold families (`F`), local structural
 domain families (`D`), and sequence-homologous subgroups (`S`). D families use cropped structures
 for FoldMason, US-align, and FoldTree, and independently cropped sequences for BLASTp, MAFFT,
@@ -20,6 +20,12 @@ F-family evolutionary results. Every F/D relationship is bidirectionally linked.
 proteins remain independent records with an auditable best local-hit explanation that separates
 borderline evidence, filtered hits, and no raw hit. Diagnostic labels never relax D-family
 thresholds. Portal atlases load large structures and downloads on demand.
+
+Version 5.2.4 adds a complete, paginated workbench for proteins without a retained D-family
+assignment. These proteins keep their domain-analysis context while exposing full-protein
+structure, RNA-seq, annotation, sequence, database hits, pockets, and the auditable local-match
+diagnostic. Annotation tables and the main/detail view controls now adapt to narrow or resized
+panels without hiding evidence fields.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured

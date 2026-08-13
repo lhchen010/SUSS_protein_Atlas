@@ -1021,11 +1021,49 @@ def test_portal_and_atlas_share_the_scientific_console_visual_contract():
     assert "#primary{border-right:0;background:var(--s-paper)}" in prefix
     assert ".dlbar{margin-top:8px" in prefix
     assert "background:#f7f9fb" not in renderer
-    assert ".annotation-table-wrap{max-height:340px" in prefix
+    assert ".annotation-table-wrap{container-type:inline-size" in prefix
+    assert "@container (max-width:460px)" in prefix
     assert "class=\"annotation-table\"" in renderer
+    assert 'data-label="Protein"' in renderer
     assert "background:#eef" not in renderer
     assert "flex-wrap:wrap;overflow:visible" in prefix
     assert "@media(max-width:700px)" in prefix
+
+
+def test_domain_unassigned_table_keeps_domain_context_and_paginates():
+    renderer = (
+        ROOT / "workflow" / "builders" / "template" / "renderer.js"
+    ).read_text()
+    prefix = (
+        ROOT / "workflow" / "builders" / "template" / "prefix.html"
+    ).read_text()
+    builder = (
+        ROOT / "workflow" / "builders" / "html_builder.py"
+    ).read_text()
+
+    assert "function showDomainUnassigned" in renderer
+    assert "function renderDomainUnassignedRows" in renderer
+    assert "domainUnassignedPageSize=50" in renderer
+    assert 'data-domain-unassigned=' in renderer
+    assert "domainDiagnosticAutoCollapsed" not in renderer
+    assert "openDomainDiagnosticProtein" not in renderer
+    assert 'id="domainUnassignedPager"' in renderer
+    assert "domain_unassigned_filtered.csv" in renderer
+    assert '"pdb_tm": member_annotation.get("pdb_tm")' in builder
+    assert '"p2rank_resi": p2rank.get("lining_residues", [])' in builder
+    assert '#net,#singletons,#domains,#unassigned{width:100%;height:100%}' in prefix
+
+
+def test_detail_view_collapse_overrides_drag_width_and_resizes_views():
+    prefix = (
+        ROOT / "workflow" / "builders" / "template" / "prefix.html"
+    ).read_text()
+
+    assert "#side.collapsed{width:0!important;min-width:0!important" in prefix
+    assert "#wrap.detail-collapsed #primary{flex:1 1 auto}" in prefix
+    assert "function resizeAtlasViews" in prefix
+    assert 'wrap.classList.toggle(stateClass,col)' in prefix
+    assert '>Hide detail view</button>' in prefix
 
 
 def test_portal_exposes_qc_length_controls_and_foldseek_uses_qc_only():
