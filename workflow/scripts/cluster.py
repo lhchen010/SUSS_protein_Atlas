@@ -80,7 +80,17 @@ for fid in fam_sizes.index:
                      max_identity=retained_fident_max,
                      mean_pLDDT=round(comm[comm.community==fid].plddt.mean(),1),
                      mean_len=int(comm[comm.community==fid].length.mean())))
-fam = pd.DataFrame(rows).sort_values("n_members", ascending=False).reset_index(drop=True)
+FAM_COLS = [
+    "family", "community", "n_members", "n_edges",
+    "mean_retained_edge_TM", "mean_retained_edge_foldseek_fident",
+    "max_retained_edge_foldseek_fident", "mean_TM", "mean_identity",
+    "max_identity", "mean_pLDDT", "mean_len",
+]
+fam = (
+    pd.DataFrame(rows, columns=FAM_COLS)
+    .sort_values("n_members", ascending=False)
+    .reset_index(drop=True)
+)
 
 os.makedirs(os.path.dirname(out_fam), exist_ok=True)
 os.makedirs(famdir, exist_ok=True)
