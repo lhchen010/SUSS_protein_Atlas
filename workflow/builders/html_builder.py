@@ -1063,11 +1063,32 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
                 ex["has_esm"] = False
         else:
             ex["has_esm"] = False
-        # cysteine count on the reference conservation PDB (disulfide-rich effector signal)
-        cons_pdb_p = os.path.join(fd, f"{fam}_conservation.pdb")
-        if os.path.exists(cons_pdb_p):
+        # cysteine count on the family reference structure (disulfide-rich effector signal);
+        # prefer the actual reference PDB or structural conservation PDB so families without
+        # Rate4Site (e.g. high-SUSS families with empty conservation.pdb) still report true CYS.
+        cys_text = ""
+        ref_key = ex.get("ref_used") or ex.get("hub") or (members[0] if members else "")
+        cys_candidates = [
+            os.path.join(fd, f"{fam}_structural_conservation.pdb"),
+            os.path.join(fd, f"{fam}_conservation.pdb"),
+        ]
+        if ref_key:
+            ref_pdb_path = _structure_path(
+                ref_key,
+                input_dir=os.path.join(results_dir, "qc_pdb") if os.path.isdir(os.path.join(results_dir, "qc_pdb")) else config.get("input", {}).get("pdb_dir", ""),
+                strain=config.get("strain", {}).get("code", ""),
+                family_dir=fd,
+                fallback_dir=config.get("input", {}).get("pdb_dir", ""),
+            )
+            if ref_pdb_path:
+                cys_candidates.insert(0, ref_pdb_path)
+        for cand_path in cys_candidates:
+            if os.path.exists(cand_path) and os.path.getsize(cand_path) > 0:
+                cys_text = open(cand_path, encoding="utf-8", errors="replace").read()
+                break
+        if cys_text:
             cys = set()
-            for line in open(cons_pdb_p, encoding="utf-8", errors="replace"):
+            for line in cys_text.splitlines():
                 if line.startswith("ATOM") and line[17:20].strip() == "CYS":
                     try: cys.add(int(line[22:26]))
                     except Exception: pass

@@ -3,6 +3,20 @@
 All notable changes to **SUSS Protein Atlas** are documented here. Detailed historical
 development and audit notes are preserved under [`docs/archive/`](docs/archive/).
 
+## [5.3.1] — Scientific Audit Fixes (Cysteine Count, BLAST Matrix Filtering & EffectorP IDs)
+
+### Fixed
+- **Cysteine count (`n_cys`) for Rate4Site-ineligible families**: `workflow/builders/html_builder.py`
+  now counts cysteines from the family reference PDB (or structural conservation PDB) instead of
+  only `{fam}_conservation.pdb`, fixing false `n_cys = 0` displays on high-SUSS cysteine-rich
+  effector families without Rate4Site.
+- **BLAST identity matrix noise filtering**: `workflow/scripts/matrices.py` now filters BLASTp
+  hits using the configured `classification.blast_evalue` and `min_reciprocal_coverage` via
+  `select_blast_relationships()`, preventing noise-level HSPs (e.g. `evalue = 10`, `<5%` coverage)
+  from inflating `F_ID.csv`, `NET.maxid`, `NET.id_pct`, and `NET.n_blast_pairs`.
+- **EffectorP annotation parser**: fixed stale `ACCRE` reference in `workflow/scripts/annotate.py`
+  so EffectorP calls parse cleanly for both GenBank and non-GenBank accessions.
+
 ## [5.3.0] — Architecture Hardening, Flexible IDs & mmCIF Support
 
 ### Added

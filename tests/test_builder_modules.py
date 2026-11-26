@@ -32,3 +32,21 @@ def test_domain_workbench_is_importable_without_snakemake_global():
     )
     assert mat[0][0] == 1.0
     assert mat[0][1] == 0.75
+
+
+def test_annotate_has_no_stale_accre_reference():
+    src = (ROOT / "workflow" / "scripts" / "annotate.py").read_text(encoding="utf-8")
+    assert "ACCRE" not in src
+
+
+def test_matrices_filters_blast_with_configured_thresholds():
+    src = (ROOT / "workflow" / "scripts" / "matrices.py").read_text(encoding="utf-8")
+    sf = (ROOT / "workflow" / "Snakefile").read_text(encoding="utf-8")
+    assert "select_blast_relationships" in src
+    assert "evalue=config[\"classification\"][\"blast_evalue\"]" in sf
+
+
+def test_html_builder_counts_cysteines_without_requiring_rate4site_pdb():
+    src = (ROOT / "workflow" / "builders" / "html_builder.py").read_text(encoding="utf-8")
+    assert "cys_candidates" in src
+    assert "_structural_conservation.pdb" in src

@@ -408,7 +408,9 @@ rule matrices:
             blastp=f"{RESULTS}/blastp_allvsall.tsv",
             famfile=f"{MEMBER_DIR}/{{fam}}.members.txt"
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM.csv", idm=f"{FAM_DIR}/{{fam}}/{{fam}}_ID.csv"
-    params: sym=config["clustering"]["tm_symmetric"]
+    params: sym=config["clustering"]["tm_symmetric"],
+            evalue=config["classification"]["blast_evalue"],
+            coverage=config["classification"].get("min_reciprocal_coverage", 0.5)
     script: "scripts/matrices.py"
 
 # per-family US-align TM matrix — ALGORITHM-INDEPENDENT cross-check of the Foldseek TM.

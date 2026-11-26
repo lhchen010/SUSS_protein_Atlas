@@ -205,12 +205,17 @@ fs_pdb = best_fs(fs_pdb_tsv, statuses["foldseek_pdb_status"])
 fs_afdb = best_fs(fs_afdb_tsv, statuses["foldseek_afdb_status"])
 
 eff = {}
+acc_set = set(accs)
 if statuses["effectorp_status"] == "complete":
     with open(effp_out, encoding="utf-8", errors="replace") as handle:
         for line in handle:
+            if not line.strip() or line.startswith("#"):
+                continue
             parts = [item.strip() for item in line.split("\t")]
-            if parts and ACCRE.search(parts[0]):
-                eff[acc_of(parts[0])] = parts[-1]
+            if len(parts) >= 2:
+                candidate = acc_of(parts[0])
+                if candidate in acc_set:
+                    eff[candidate] = parts[-1]
 
 tm_regions = defaultdict(int)
 if statuses["deeptmhmm_status"] == "complete":
