@@ -39,11 +39,11 @@ MAX_EXTRACTED_BYTES = int(os.environ.get("SUSS_MAX_EXTRACTED_MB", "2048")) * 102
 MAX_ARCHIVE_FILES = int(os.environ.get("SUSS_MAX_ARCHIVE_FILES", "10000"))
 MAX_ACTIVE_JOBS = int(os.environ.get("SUSS_MAX_ACTIVE_JOBS", "1"))
 CSRF_TOKEN = secrets.token_urlsafe(32)
-_WORKFLOW_SCRIPTS = os.path.abspath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workflow", "scripts")
-)
-if os.path.isdir(_WORKFLOW_SCRIPTS) and _WORKFLOW_SCRIPTS not in sys.path:
-    sys.path.insert(0, _WORKFLOW_SCRIPTS)
+_PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
+_WORKFLOW_SCRIPTS = os.path.abspath(os.path.join(_PORTAL_DIR, "..", "workflow", "scripts"))
+for _p in (_WORKFLOW_SCRIPTS, _PORTAL_DIR):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
 try:
     from id_utils import (
         ACCESSION_RE,
