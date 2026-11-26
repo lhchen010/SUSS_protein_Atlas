@@ -15,7 +15,6 @@ members  = snakemake.input.members          # results/members.csv (acc,family,..
 out_all  = snakemake.output.all
 fam_dir  = snakemake.params.fam_dir
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 xl = pd.ExcelFile(xlsx)
 expr = xl.parse("expression")
 # lab-standard sheet is 'id_mapping' with headers [protein_accession, gene_id];

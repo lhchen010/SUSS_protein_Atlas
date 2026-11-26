@@ -25,12 +25,22 @@ anno_dir = os.path.join(os.path.dirname(out_mem), "anno")
 os.makedirs(anno_dir, exist_ok=True)
 log_path = os.path.join(anno_dir, "annotate_tools.log")
 
-ACCRE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+from id_utils import extract_accession
+
+_STRAIN = snakemake.config.get("strain", {}).get("code", "")
+_CUSTOM_ACC_RE = (
+    str(snakemake.config.get("input", {}).get("accession_pattern", "") or "").strip() or None
+)
+THREADS = max(1, int(getattr(snakemake, "threads", 4)))
 
 
 def acc_of(value):
-    match = ACCRE.search(str(value))
-    return match.group(0) if match else str(value).split()[0]
+    return extract_accession(
+        value,
+        strain=_STRAIN,
+        custom_pattern=_CUSTOM_ACC_RE,
+        strip_strain_prefix=True,
+    )
 
 
 def run_tool(cmd, name, *, timeout=5400, cwd=None, stdout_path=None, allow_output_on_error=None):
@@ -109,7 +119,7 @@ if enabled:
                 fmt = "query,target,theader,evalue,alntmscore,fident,alnlen,prob,qstart,qend,tstart,tend"
                 run_tool([foldseek, "easy-search", query_db, database, output,
                           os.path.join(work, "tmp_" + db_name), "--format-output", fmt,
-                          "-e", "0.01", "--max-seqs", "10", "--threads", "24"],
+                          "-e", "0.01", "--max-seqs", "10", "--threads", str(THREADS)],
                          f"Foldseek {db_name}")
                 if not os.path.isfile(output):
                     raise RuntimeError(f"Foldseek {db_name} completed without an output file")

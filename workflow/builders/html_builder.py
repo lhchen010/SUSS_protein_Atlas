@@ -393,6 +393,21 @@ def _structure_path(accession, input_dir="", strain="", family_dir=None, fallbac
             f"Ambiguous structures for {accession}: "
             + ", ".join(prefixed_matches)
         )
+    # Fallback: match by extracted accession (e.g. AF-<UniProt>-F1-model_v4.pdb)
+    extracted_matches = []
+    for root in dict.fromkeys(root for root in (input_dir, fallback_dir) if root and os.path.isdir(root)):
+        for entry in sorted(os.listdir(root)):
+            if not entry.lower().endswith(".pdb"):
+                continue
+            if extract_accession(entry, strain=strain, strip_strain_prefix=True) == accession:
+                extracted_matches.append(os.path.join(root, entry))
+    if len(extracted_matches) == 1:
+        return extracted_matches[0]
+    if len(extracted_matches) > 1:
+        raise RuntimeError(
+            f"Ambiguous structures for {accession}: "
+            + ", ".join(extracted_matches)
+        )
     return ""
 
 
@@ -1797,9 +1812,20 @@ def build_atlas(master_csv, cards_dir, composition_xlsx, annotation_csv,
             )
         members = []
         if os.path.exists(mem_file):
+            custom_pat = str(config.get("input", {}).get("accession_pattern", "") or "").strip() or None
+            strain_code = str(config.get("strain", {}).get("code", "") or "")
             for line in open(mem_file):
-                m = re.search(r"[A-Z]{2,3}\d{4,}\.\d+", line)
-                if m: members.append(m.group(0))
+                raw_line = line.strip()
+                if not raw_line:
+                    continue
+                acc_val = extract_accession(
+                    os.path.basename(raw_line),
+                    strain=strain_code,
+                    custom_pattern=custom_pat,
+                    strip_strain_prefix=True,
+                )
+                if acc_val:
+                    members.append(acc_val)
         fam_accs[fam] = members
         # assets
         tm = load_csv(os.path.join(fd, f"{fam}_TM.csv"))

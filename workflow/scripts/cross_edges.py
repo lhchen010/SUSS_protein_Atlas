@@ -13,9 +13,7 @@ out_csv  = snakemake.output[0]
 TM_THR   = float(snakemake.params.tm_thr)
 sym_mode = snakemake.params.sym
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-def acc_of(s):
-    m = accre.search(str(s)); return m.group(0) if m else str(s)
+from v3_utils import protein_id as acc_of
 
 mem = pd.read_csv(members)
 mem = mem[mem.family != "singleton"].copy()

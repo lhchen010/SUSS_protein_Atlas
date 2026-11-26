@@ -1101,7 +1101,8 @@ def test_portal_exposes_qc_length_controls_and_foldseek_uses_qc_only():
     assert 'name=min_plddt min=0 max=100' in portal
     assert 'cfg.setdefault("qc", {}).update(' in portal
     assert "rule qc_structures:" in snakefile
-    assert snakefile.count('pdb_dir=f"{RESULTS}/qc_pdb"') == 2
+    assert snakefile.count('pdb_dir=f"{RESULTS}/qc_pdb"') >= 2
+    assert '"--threads", "24"' not in (ROOT / "workflow" / "scripts" / "annotate.py").read_text()
     assert "easy-search {input.pdb_dir} {input.pdb_dir}" in snakefile
 
 

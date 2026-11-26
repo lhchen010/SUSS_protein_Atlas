@@ -17,7 +17,8 @@ strain:
 input:
   pdb_dir: "input/pdb"            # mature AF2 PDBs, named <code>_<accession>.pdb
   seqs_fasta: "input/seqs.fasta"  # optional; if absent, sequences are extracted from structures
-  rnaseq_xlsx: ""                 # optional; empty = no RNA-seq (card cell left blank)
+  rnaseq_xlsx: ""
+  accession_pattern: ""           # optional custom regex for non-standard protein IDs (auto-supports GenBank, RefSeq, UniProt, AFDB, custom stems)                 # optional; empty = no RNA-seq (card cell left blank)
   auto_geo: false                 # true = try to fetch RNA-seq from GEO when rnaseq_xlsx is empty
 
 # ---- Lab-standard defaults (settled; normally unchanged) ----
@@ -147,3 +148,6 @@ tools:
   # --- external database directory (downloaded by scripts/setup_databases.sh) ---
   foldseek_db_dir: /path/to/foldseek_db    # holds pdb100 + afdb_swissprot (annotation)
   afdb_swissprot_name_map: ""     # optional CSV/TSV with target,name columns
+
+resources:
+  annotate_threads: 8             # max threads for Foldseek annotation (capped by Snakemake --cores)

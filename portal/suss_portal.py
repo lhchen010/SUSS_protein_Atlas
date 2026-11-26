@@ -34,7 +34,43 @@ MAX_EXTRACTED_BYTES = int(os.environ.get("SUSS_MAX_EXTRACTED_MB", "2048")) * 102
 MAX_ARCHIVE_FILES = int(os.environ.get("SUSS_MAX_ARCHIVE_FILES", "10000"))
 MAX_ACTIVE_JOBS = int(os.environ.get("SUSS_MAX_ACTIVE_JOBS", "1"))
 CSRF_TOKEN = secrets.token_urlsafe(32)
-ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+_WORKFLOW_SCRIPTS = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workflow", "scripts")
+)
+if os.path.isdir(_WORKFLOW_SCRIPTS) and _WORKFLOW_SCRIPTS not in sys.path:
+    sys.path.insert(0, _WORKFLOW_SCRIPTS)
+try:
+    from id_utils import (
+        ACCESSION_RE,
+        extract_accession as _extract_accession,
+        normalize_structure_filename as _normalize_structure_filename,
+    )
+    from structure_io import is_structure_file as _is_structure_file
+except ImportError:
+    ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+    _STRUCT_RE = re.compile(r"\.(pdb|cif|mmcif)(\.gz)?$", flags=re.IGNORECASE)
+
+    def _is_structure_file(name):
+        return bool(_STRUCT_RE.search(str(name)))
+
+    def _extract_accession(value, *, strain="", custom_pattern=None, strip_strain_prefix=False):
+        m = ACCESSION_RE.search(os.path.basename(str(value)))
+        if m:
+            return m.group(0)
+        stem = _STRUCT_RE.sub("", os.path.basename(str(value)))
+        if strain and stem.startswith(f"{strain}_"):
+            return stem[len(strain) + 1 :]
+        if strip_strain_prefix and "_" in stem:
+            return stem.split("_", 1)[1]
+        return stem
+
+    def _normalize_structure_filename(filename, strain_code, *, custom_pattern=None):
+        base = os.path.basename(filename)
+        m = _STRUCT_RE.search(base)
+        ext = m.group(0).lower() if m else ".pdb"
+        acc = _extract_accession(base, strain=strain_code, strip_strain_prefix=True)
+        return f"{strain_code}_{acc}{ext}"
+
 os.makedirs(RUNS_DIR, exist_ok=True)
 
 JOBS = {}          # job_id -> dict(state, dir, log, atlas, msg, started, families, meta, ...)
@@ -53,9 +89,7 @@ def _safe_extract_engine(archive, destination):
 
 
 def _normalized_pdb_name(filename, strain_code):
-    match = ACCESSION_RE.search(os.path.basename(filename))
-    accession = match.group(0) if match else os.path.basename(filename)
-    return f"{strain_code}_{accession}.pdb"
+    return _normalize_structure_filename(filename, strain_code)
 
 
 def _uploaded_filename(item):
@@ -852,15 +886,15 @@ def run_pipeline(job_id, meta, files):
                 # skip macOS AppleDouble / metadata junk (._foo.pdb, .DS_Store, __MACOSX/)
                 if base.startswith("._") or base == ".DS_Store" or "__MACOSX" in m.name:
                     skipped += 1; continue
-                if m.isfile() and base.lower().endswith(".pdb"):
+                if m.isfile() and _is_structure_file(base):
                     acc = _normalized_pdb_name(base, meta["code"])
                     with open(os.path.join(pdbdir, acc), "wb") as fh:
                         fh.write(t.extractfile(m).read())
         if skipped: _log(j, f"skipped {skipped} macOS metadata file(s) (._*, .DS_Store)")
-        npdb = len([f for f in os.listdir(pdbdir) if f.endswith(".pdb")])
+        npdb = len([f for f in os.listdir(pdbdir) if _is_structure_file(f)])
         j["npdb"] = npdb; j["nseq"] = (files.get("seqs") or b"").count(b">") or None
         _log(j, f"staged {npdb} structures")
-        if npdb == 0: raise ValueError("no .pdb files found in the uploaded tarball")
+        if npdb == 0: raise ValueError("no .pdb/.cif/.mmcif files found in the uploaded tarball")
         # optional seqs / rnaseq
         if files.get("seqs"):
             open(os.path.join(eng, "input", "seqs.fasta"), "wb").write(files["seqs"])
