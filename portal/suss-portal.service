@@ -1,0 +1,24 @@
+[Unit]
+Description=SUSS Protein Atlas Intranet Portal
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/claude/suss_portal
+Environment=SUSS_ENGINE_TAR=/home/claude/suss_portal/suss_engine.tar.gz
+Environment=SUSS_RUNS_DIR=/home/claude/suss_portal/runs
+Environment=SUSS_CONDA=/home/claude/.conda/envs/suss
+Environment=SUSS_PORT=8600
+Environment=SUSS_CORES=4
+Environment=SUSS_BIND=100.80.77.29
+Environment=SUSS_MAX_UPLOAD_MB=512
+Environment=SUSS_MAX_EXTRACTED_MB=2048
+Environment=SUSS_MAX_ARCHIVE_FILES=10000
+Environment=SUSS_MAX_ACTIVE_JOBS=1
+ExecStart=/home/claude/.conda/envs/suss/bin/python /home/claude/suss_portal/suss_portal.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

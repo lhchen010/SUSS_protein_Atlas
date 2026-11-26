@@ -15,13 +15,12 @@ members  = snakemake.input.members          # results/members.csv (acc,family,..
 out_all  = snakemake.output.all
 fam_dir  = snakemake.params.fam_dir
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
 xl = pd.ExcelFile(xlsx)
-expr = xl.parse("expression")
+expr = pd.read_excel(xl, sheet_name="expression")
 # lab-standard sheet is 'id_mapping' with headers [protein_accession, gene_id];
 # tolerate the older 'mapping'/[accession, locus] names for backward compatibility.
 map_sheet = "id_mapping" if "id_mapping" in xl.sheet_names else "mapping"
-mapping = xl.parse(map_sheet)
+mapping = pd.read_excel(xl, sheet_name=map_sheet)
 expr = expr.rename(columns={expr.columns[0]: "locus"})
 acc_col = next((c for c in ("protein_accession", "accession") if c in mapping.columns), mapping.columns[0])
 loc_col = next((c for c in ("gene_id", "locus") if c in mapping.columns), mapping.columns[1])

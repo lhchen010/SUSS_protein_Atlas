@@ -20,16 +20,19 @@ ftdir = str(Path(ftdir).expanduser().resolve())
 if not os.path.isfile(os.path.join(ftdir, "workflow", "fold_tree")):
     raise FileNotFoundError(f"FoldTree workflow not found under {ftdir}")
 
-accre = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+from id_utils import extract_accession
+strain = snakemake.config.get("strain", {}).get("code", "")
+custom_pattern = str(snakemake.config.get("input", {}).get("accession_pattern", "") or "").strip() or None
 famroot = os.path.abspath(os.path.dirname(outputs[0]))
 structures = {}
 for line in open(famfile):
     p = line.strip()
-    if not p: continue
-    acc = accre.search(os.path.basename(p))
-    src = p if os.path.exists(p) else ((glob.glob(os.path.join(pdb_dir, f"*{acc.group(0)}*.pdb"))[:1] or [None])[0] if acc else None)
+    if not p:
+        continue
+    acc = extract_accession(os.path.basename(p), strain=strain, custom_pattern=custom_pattern, strip_strain_prefix=True)
+    src = p if os.path.exists(p) else ((glob.glob(os.path.join(pdb_dir, f"*{acc}*.pdb"))[:1] or [None])[0] if acc else None)
     if src and acc:
-        structures[acc.group(0)] = src
+        structures[acc] = src
 status = run_foldtree_family(
     family=fam,
     structures=structures,

@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import igraph as ig
 import leidenalg
+from structure_io import staged_pdb_name
 from v3_utils import select_structural_hub, whole_fold_edges
 
 tsv      = snakemake.input.tsv
@@ -79,7 +80,17 @@ for fid in fam_sizes.index:
                      max_identity=retained_fident_max,
                      mean_pLDDT=round(comm[comm.community==fid].plddt.mean(),1),
                      mean_len=int(comm[comm.community==fid].length.mean())))
-fam = pd.DataFrame(rows).sort_values("n_members", ascending=False).reset_index(drop=True)
+FAM_COLS = [
+    "family", "community", "n_members", "n_edges",
+    "mean_retained_edge_TM", "mean_retained_edge_foldseek_fident",
+    "max_retained_edge_foldseek_fident", "mean_TM", "mean_identity",
+    "max_identity", "mean_pLDDT", "mean_len",
+]
+fam = (
+    pd.DataFrame(rows, columns=FAM_COLS)
+    .sort_values("n_members", ascending=False)
+    .reset_index(drop=True)
+)
 
 os.makedirs(os.path.dirname(out_fam), exist_ok=True)
 os.makedirs(famdir, exist_ok=True)
@@ -90,8 +101,13 @@ keep.to_csv(out_edge, index=False)
 # per-family member-file (paths to PDBs) for downstream per-family rules.
 # HUB = member with highest mean within-family TM ("most like everyone"); written FIRST
 # so FoldMason MSA, rate4site -a, pocket ref, and hub marking all use the SAME protein.
-pdb_dir = snakemake.config["input"]["pdb_dir"]
-acc2fn = dict(zip(qc.acc, qc.fn)) if "fn" in qc.columns else {}
+pdb_dir = getattr(snakemake.input, "pdb_dir", snakemake.config["input"]["pdb_dir"])
+if "staged_fn" in qc.columns:
+    acc2fn = dict(zip(qc.acc, qc.staged_fn))
+elif "fn" in qc.columns:
+    acc2fn = {a: staged_pdb_name(f) for a, f in zip(qc.acc, qc.fn)}
+else:
+    acc2fn = {}
 # Hub scoring uses every measured within-family Foldseek pair, including hits below
 # the clustering threshold. Missing pairs remain missing and never contribute zero.
 tm_pair = all_pair_edges[

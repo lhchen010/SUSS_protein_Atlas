@@ -12,20 +12,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from id_utils import ACCESSION_RE, extract_accession
 from runtime_utils import symmetric_tm
 
 
-ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
-
-
 def protein_id(value: object) -> str:
-    """Return a stable protein identifier from a Foldseek/FASTA/PDB label."""
-    text = Path(str(value)).name
-    match = ACCESSION_RE.search(text)
-    if match:
-        return match.group(0)
-    text = re.sub(r"\.(pdb|cif|mmcif)(\.gz)?$", "", text, flags=re.IGNORECASE)
-    return text.split()[0]
+    """Return a stable protein identifier from a Foldseek/FASTA/PDB/mmCIF label."""
+    return extract_accession(value)
 
 
 def coverage(alnlen: object, length: object) -> float:

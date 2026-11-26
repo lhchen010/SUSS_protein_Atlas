@@ -16,16 +16,22 @@ if [[ -f "$PID_FILE" ]]; then
     fi
 fi
 
-export SUSS_ENGINE_TAR="$PORTAL_DIR/suss_engine.tar.gz"
-export SUSS_RUNS_DIR="$PORTAL_DIR/runs"
+export SUSS_ENGINE_TAR="${SUSS_ENGINE_TAR:-$PORTAL_DIR/suss_engine.tar.gz}"
+export SUSS_RUNS_DIR="${SUSS_RUNS_DIR:-$PORTAL_DIR/runs}"
 export SUSS_CONDA="${SUSS_CONDA:-/home/claude/.conda/envs/suss}"
 export SUSS_PORT="${SUSS_PORT:-8600}"
 export SUSS_CORES="${SUSS_CORES:-4}"
-export SUSS_BIND="${SUSS_BIND:-0.0.0.0}"
+# Default to Tailscale interface IP (override with SUSS_BIND=127.0.0.1 or 0.0.0.0 if needed)
+export SUSS_BIND="${SUSS_BIND:-100.80.77.29}"
 export SUSS_MAX_UPLOAD_MB="${SUSS_MAX_UPLOAD_MB:-512}"
 export SUSS_MAX_EXTRACTED_MB="${SUSS_MAX_EXTRACTED_MB:-2048}"
 export SUSS_MAX_ARCHIVE_FILES="${SUSS_MAX_ARCHIVE_FILES:-10000}"
 export SUSS_MAX_ACTIVE_JOBS="${SUSS_MAX_ACTIVE_JOBS:-1}"
+
+HEALTH_HOST="$SUSS_BIND"
+if [[ "$HEALTH_HOST" == "0.0.0.0" ]]; then
+    HEALTH_HOST="127.0.0.1"
+fi
 
 cd "$PORTAL_DIR"
 setsid nohup "$SUSS_CONDA/bin/python" suss_portal.py >"$LOG_FILE" 2>&1 </dev/null &
@@ -33,8 +39,8 @@ new_pid=$!
 echo "$new_pid" >"$PID_FILE"
 
 for _ in {1..20}; do
-    if curl --silent --show-error --fail "http://127.0.0.1:$SUSS_PORT/" >/dev/null; then
-        echo "SUSS portal started: pid=$new_pid port=$SUSS_PORT"
+    if curl --silent --show-error --fail "http://${HEALTH_HOST}:${SUSS_PORT}/" >/dev/null; then
+        echo "SUSS portal started: pid=$new_pid bind=${SUSS_BIND}:${SUSS_PORT}"
         exit 0
     fi
     sleep 0.25

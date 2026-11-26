@@ -7,8 +7,8 @@ fresh per-job engine copy, runs the preflight `validate` rule (blocks on format 
 then launches the full snakemake pipeline in the background. A status page polls progress
 and links to the finished atlas HTML.
 
-Runs in the `suss` conda env on the 4070. No framework — BaseHTTPRequestHandler + cgi
-multipart (python 3.11). Bind 127.0.0.1 behind tailscale; NOT hardened for public exposure.
+Runs in the `suss` conda env on the 4070. No framework — BaseHTTPRequestHandler + stdlib
+multipart parser (python 3.11-3.14+). Bind 127.0.0.1 behind tailscale; NOT hardened for public exposure.
 
 Env knobs (set before launch):
   SUSS_ENGINE_TAR   path to a suss_engine_vX.tar.gz (fresh engine per job)
@@ -19,9 +19,14 @@ Env knobs (set before launch):
                     to reach it from a browser over tailscale — tailscale is a private
                     encrypted network, so binding its interface is the intended intranet use)
 """
-import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid, glob
+import os, sys, io, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid, glob
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PORTAL_DIR not in sys.path:
+    sys.path.insert(0, _PORTAL_DIR)
+from multipart_form import parse_form
 
 ENGINE_TAR = os.environ.get("SUSS_ENGINE_TAR", os.path.expanduser("~/suss_engine.tar.gz"))
 RUNS_DIR   = os.environ.get("SUSS_RUNS_DIR", os.path.expanduser("~/suss_portal_runs"))
@@ -34,7 +39,43 @@ MAX_EXTRACTED_BYTES = int(os.environ.get("SUSS_MAX_EXTRACTED_MB", "2048")) * 102
 MAX_ARCHIVE_FILES = int(os.environ.get("SUSS_MAX_ARCHIVE_FILES", "10000"))
 MAX_ACTIVE_JOBS = int(os.environ.get("SUSS_MAX_ACTIVE_JOBS", "1"))
 CSRF_TOKEN = secrets.token_urlsafe(32)
-ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+_PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
+_WORKFLOW_SCRIPTS = os.path.abspath(os.path.join(_PORTAL_DIR, "..", "workflow", "scripts"))
+for _p in (_WORKFLOW_SCRIPTS, _PORTAL_DIR):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+try:
+    from id_utils import (
+        ACCESSION_RE,
+        extract_accession as _extract_accession,
+        normalize_structure_filename as _normalize_structure_filename,
+    )
+    from structure_io import is_structure_file as _is_structure_file
+except ImportError:
+    ACCESSION_RE = re.compile(r"[A-Z]{2,3}\d{4,}\.\d+")
+    _STRUCT_RE = re.compile(r"\.(pdb|cif|mmcif)(\.gz)?$", flags=re.IGNORECASE)
+
+    def _is_structure_file(name):
+        return bool(_STRUCT_RE.search(str(name)))
+
+    def _extract_accession(value, *, strain="", custom_pattern=None, strip_strain_prefix=False):
+        m = ACCESSION_RE.search(os.path.basename(str(value)))
+        if m:
+            return m.group(0)
+        stem = _STRUCT_RE.sub("", os.path.basename(str(value)))
+        if strain and stem.startswith(f"{strain}_"):
+            return stem[len(strain) + 1 :]
+        if strip_strain_prefix and "_" in stem:
+            return stem.split("_", 1)[1]
+        return stem
+
+    def _normalize_structure_filename(filename, strain_code, *, custom_pattern=None):
+        base = os.path.basename(filename)
+        m = _STRUCT_RE.search(base)
+        ext = m.group(0).lower() if m else ".pdb"
+        acc = _extract_accession(base, strain=strain_code, strip_strain_prefix=True)
+        return f"{strain_code}_{acc}{ext}"
+
 os.makedirs(RUNS_DIR, exist_ok=True)
 
 JOBS = {}          # job_id -> dict(state, dir, log, atlas, msg, started, families, meta, ...)
@@ -53,13 +94,11 @@ def _safe_extract_engine(archive, destination):
 
 
 def _normalized_pdb_name(filename, strain_code):
-    match = ACCESSION_RE.search(os.path.basename(filename))
-    accession = match.group(0) if match else os.path.basename(filename)
-    return f"{strain_code}_{accession}.pdb"
+    return _normalize_structure_filename(filename, strain_code)
 
 
 def _uploaded_filename(item):
-    """Read a cgi.FieldStorage filename without invoking its unsupported truth test."""
+    """Read an uploaded form-part filename without invoking a truth test."""
     return item.filename if item is not None else ""
 
 
@@ -852,15 +891,15 @@ def run_pipeline(job_id, meta, files):
                 # skip macOS AppleDouble / metadata junk (._foo.pdb, .DS_Store, __MACOSX/)
                 if base.startswith("._") or base == ".DS_Store" or "__MACOSX" in m.name:
                     skipped += 1; continue
-                if m.isfile() and base.lower().endswith(".pdb"):
+                if m.isfile() and _is_structure_file(base):
                     acc = _normalized_pdb_name(base, meta["code"])
                     with open(os.path.join(pdbdir, acc), "wb") as fh:
                         fh.write(t.extractfile(m).read())
         if skipped: _log(j, f"skipped {skipped} macOS metadata file(s) (._*, .DS_Store)")
-        npdb = len([f for f in os.listdir(pdbdir) if f.endswith(".pdb")])
+        npdb = len([f for f in os.listdir(pdbdir) if _is_structure_file(f)])
         j["npdb"] = npdb; j["nseq"] = (files.get("seqs") or b"").count(b">") or None
         _log(j, f"staged {npdb} structures")
-        if npdb == 0: raise ValueError("no .pdb files found in the uploaded tarball")
+        if npdb == 0: raise ValueError("no .pdb/.cif/.mmcif files found in the uploaded tarball")
         # optional seqs / rnaseq
         if files.get("seqs"):
             open(os.path.join(eng, "input", "seqs.fasta"), "wb").write(files["seqs"])
@@ -1018,6 +1057,7 @@ class H(BaseHTTPRequestHandler):
                 candidates = [
                     os.path.join(engine, "input", "pdb", f"{name}.pdb"),
                     *glob.glob(os.path.join(engine, "input", "pdb", f"*_{name}.pdb")),
+                    *glob.glob(os.path.join(engine, "results", "qc_pdb", f"*{name}*.pdb")),
                     *glob.glob(os.path.join(engine, "input", "pdb", f"*{name}*.pdb")),
                 ]
                 path = next((p for p in candidates if os.path.isfile(p)), "")
@@ -1071,9 +1111,10 @@ class H(BaseHTTPRequestHandler):
             self._send(page("<h1>404</h1>"), code=404)
 
     def _handle_delete(self):
-        ctype = self.headers.get("Content-Type", "")
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
-                                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
+        try:
+            form = parse_form(self.rfile, self.headers, max_bytes=1024 * 1024)
+        except ValueError:
+            self._send(page("<h1>Invalid request</h1>"), code=400); return
         if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
             self._send(page("<h1>Invalid request token</h1>"), code=403); return
         jid = os.path.basename(form.getfirst("id", ""))   # basename guards against path traversal
@@ -1108,11 +1149,10 @@ class H(BaseHTTPRequestHandler):
                 length = 0
             if length <= 0 or length > 30 * 1024 * 1024:
                 self._send(page("<h1>Invalid structure upload</h1>"), code=413); return
-            ctype = self.headers.get("Content-Type", "")
-            form = cgi.FieldStorage(
-                fp=self.rfile, headers=self.headers,
-                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
-            )
+            try:
+                form = parse_form(self.rfile, self.headers, max_bytes=30 * 1024 * 1024)
+            except ValueError:
+                self._send(page("<h1>Invalid structure upload</h1>"), code=400); return
             if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
                 self._send(page("<h1>Invalid request token</h1>"), code=403); return
             jid = os.path.basename(form.getfirst("id", ""))
@@ -1138,9 +1178,11 @@ class H(BaseHTTPRequestHandler):
         if active >= MAX_ACTIVE_JOBS:
             self._send(page("<h1>Server busy</h1><p>The analysis slot is in use. Try again after the active run finishes.</p>"), code=429)
             return
-        ctype = self.headers.get("Content-Type", "")
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
-                                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
+        try:
+            form = parse_form(self.rfile, self.headers, max_bytes=MAX_UPLOAD_BYTES)
+        except ValueError:
+            self._send(page("<h1>Upload rejected</h1><p>Malformed or oversized form upload.</p>"), code=400)
+            return
         # required structure upload
         pdb_item = form["pdb_tar"] if "pdb_tar" in form else None
         pdb_bytes = pdb_item.file.read() if (pdb_item is not None and pdb_item.filename) else b""

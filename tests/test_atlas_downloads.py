@@ -256,18 +256,18 @@ def test_family_workbook_contains_complete_evidence_sheets():
         "p2rank_pockets", "foldtree", "RNAseq", "per_site",
         "superposition",
     }.issubset(workbook.sheet_names)
-    pockets = workbook.parse("pocket_predictions")
+    pockets = pd.read_excel(workbook, sheet_name="pocket_predictions")
     assert set(pockets["method"]) == {"fpocket", "p2rank"}
     assert pockets.loc[pockets.method == "p2rank", "probability"].iloc[0] == 0.73
-    pocket_summary = workbook.parse("pocket_summary").set_index("method")
+    pocket_summary = pd.read_excel(workbook, sheet_name="pocket_summary").set_index("method")
     assert pocket_summary.loc["p2rank", "profile"] == "alphafold"
-    annotation = workbook.parse("annotation")
+    annotation = pd.read_excel(workbook, sheet_name="annotation")
     assert list(annotation["acc"]) == ["A1", "A2"]
     assert {"annotation_status", "pfam_domains", "pdb_hit", "afdbsp_name",
             "effectorp", "n_TMR", "novel", "interpro_status", "foldseek_pdb_status",
             "foldseek_afdb_status", "effectorp_status", "deeptmhmm_status"}.issubset(
                 annotation.columns)
-    foldtree = workbook.parse("foldtree").set_index("metric")
+    foldtree = pd.read_excel(workbook, sheet_name="foldtree").set_index("metric")
     assert foldtree.loc["foldtree", "rooting_method"] == "midpoint"
     assert foldtree.loc["foldtree", "status"] == "complete_with_fallback"
 
@@ -326,7 +326,7 @@ def test_singleton_workbook_keeps_direct_evidence_and_omits_family_analyses():
                 workbook.sheet_names)
     assert {"foldseek_TM", "usalign_TM", "blast_identity", "blast_pairs",
             "foldtree", "superposition", "per_site"}.isdisjoint(workbook.sheet_names)
-    row = workbook.parse("annotation").iloc[0]
+    row = pd.read_excel(workbook, sheet_name="annotation").iloc[0]
     assert row["pdb_hit"] == "4XYZ"
     assert row["pdb_tm"] == 0.63
     assert row["afdbsp_name"] == "Secreted test protein"
@@ -862,7 +862,7 @@ def test_domain_workbook_keeps_explicit_sequence_msa_status_when_not_applicable(
     assert "foldmason_AA_identity" in workbook.sheet_names
     assert "domain_blastp_hits" in workbook.sheet_names
     assert "sequence_conservation" in workbook.sheet_names
-    sequence_msa = workbook.parse("sequence_MSA")
+    sequence_msa = pd.read_excel(workbook, sheet_name="sequence_MSA")
     assert sequence_msa.loc[0, "status"] == "not_applicable"
     assert "No reciprocal-coverage" in sequence_msa.loc[0, "reason"]
 
@@ -1101,7 +1101,8 @@ def test_portal_exposes_qc_length_controls_and_foldseek_uses_qc_only():
     assert 'name=min_plddt min=0 max=100' in portal
     assert 'cfg.setdefault("qc", {}).update(' in portal
     assert "rule qc_structures:" in snakefile
-    assert snakefile.count('pdb_dir=f"{RESULTS}/qc_pdb"') == 2
+    assert snakefile.count('pdb_dir=f"{RESULTS}/qc_pdb"') >= 2
+    assert '"--threads", "24"' not in (ROOT / "workflow" / "scripts" / "annotate.py").read_text()
     assert "easy-search {input.pdb_dir} {input.pdb_dir}" in snakefile
 
 

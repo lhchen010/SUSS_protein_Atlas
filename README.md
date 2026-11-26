@@ -27,9 +27,11 @@ structure, RNA-seq, annotation, sequence, database hits, pockets, and the audita
 diagnostic. Annotation tables and the main/detail view controls now adapt to narrow or resized
 panels without hiding evidence fields.
 
-Version 5.2.5 makes the full-length singleton and domain-unassigned evidence lists responsive.
-Narrow panels use complete two-column or one-column record layouts instead of clipping table
-cells, while `EffectorP`, `TMR`, `pLDDT`, and protein length remain independent sortable fields.
+Version 5.3.0 generalizes structure inputs to accept `.pdb`, `.cif`, and `.mmcif` (plain or `.gz`)
+from AlphaFold 2/3, Boltz-2, and AFDB v4, replaces hardcoded GenBank accession parsing with a
+centralized parser supporting GenBank, RefSeq, UniProt, AlphaFold DB, and custom regexes,
+removes deprecated `cgi` usage for Python 3.13+ compatibility, modularizes the atlas builder,
+fixes annotation thread scaling, and adds reproducible Docker and Apptainer definitions.
 
 > **SUSS = Sequence-Unrelated, Structurally Similar.** A SUSS label identifies a structural edge
 > that passes the configured Foldseek TM threshold but is not detected by BLAST at the configured
@@ -266,14 +268,15 @@ snakemake --configfile config/config.yaml --cores 16
 
 | Input | Required | Notes |
 |---|---:|---|
-| `input/pdb/<code>_<accession>.pdb` | Yes | Mature AlphaFold structures; signal peptide removed |
+| `input/pdb/*.pdb`, `*.cif`, `*.mmcif` (or `.gz`) | Yes | Mature predicted structures (AF2/AF3/Boltz/AFDB); GenBank, RefSeq, UniProt, AFDB, or custom IDs |
 | `input/seqs.fasta` | Recommended | Mature sequences; missing entries are derived from structure residues |
 | `input/rnaseq.xlsx` | No | Sheets `id_mapping` and `expression`; templates are in `templates/` |
 | `config/config.yaml` | Yes | Strain metadata, thresholds, step toggles, tool paths, and output settings |
 
-The preflight blocks empty or malformed structure sets before expensive analyses begin. The
-current accession parser is designed for versioned GenBank-style IDs; see the handoff report for
-known extension points if you need UniProt, JGI, Ensembl, or arbitrary identifiers.
+The preflight blocks empty, malformed, or duplicate-ID structure sets before expensive analyses
+begin. Accession extraction (`workflow/scripts/id_utils.py`) automatically recognizes GenBank,
+RefSeq, AlphaFold DB, UniProt, and custom stems, and supports a user regex via
+`input.accession_pattern`.
 
 ## Failure and optional-step semantics
 
@@ -318,19 +321,17 @@ unless all required evidence is complete.
 
 | Document | Contents |
 |---|---|
+| [docs/METHODS.md](docs/METHODS.md) | Methodology overview: F/D/S clustering, US-align validation, conservation masking, and failure semantics |
+| [CHANGELOG.md](CHANGELOG.md) | Release history from v1.0 through v5.3.0 |
 | [INSTALL.md](INSTALL.md) | Environment, external tools, databases, and DeepTMHMM compatibility |
+| [docker/Dockerfile](docker/Dockerfile) | Reproducible Linux container (Conda + US-align + P2Rank + FoldTree + ESM-Scan) |
+| [docker/Apptainer.def](docker/Apptainer.def) | HPC Apptainer/Singularity recipe matching the Docker build |
 | [config/README.md](config/README.md) | Configuration fields and step behavior |
 | [docs/FOLDSEEK_PARAMETERS.md](docs/FOLDSEEK_PARAMETERS.md) | Global fold, local domain, coverage, score, and scaling guidance |
 | [examples/EXPECTED.md](examples/EXPECTED.md) | Reproducible 100-protein acceptance baseline |
 | [docs/pipeline_io_contract.md](docs/pipeline_io_contract.md) | Rule inputs, outputs, parameters, and contracts |
-| [docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V4.1.0_HANDOFF.md) | v4.1 pocket correctness, RNA-seq repair, selectable domain superposition, deployment evidence, and Claude acceptance checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.0.2_HANDOFF.md) | v5.0.2 viewer hierarchy, all-segment structural conservation, two-axis navigation, and acceptance checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.0_HANDOFF.md) | v5.1 independent D-segment BLAST, D-specific sequence evolution, D-hub ESM semantics, and Claude acceptance checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.1_HANDOFF.md) | v5.1.1 Domain borderline/filtered-hit diagnostics, TDZ19858.1 acceptance case, and Claude test checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.1.2_VALIDATION_HANDOFF.md) | v5.1.2 independent F23 audit, family-path and directional-metadata fixes, pocket/download correctness, 4070 logs, and Claude acceptance checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.1.3_REVIEW_RESPONSE.md](docs/CLAUDE_FOR_SCIENCE_V5.1.3_REVIEW_RESPONSE.md) | v5.1.3 response to the independent 300-protein review: missing-pair statistics, conservation masking, declared outputs, 4070 rerun, and acceptance checklist |
-| [docs/CLAUDE_FOR_SCIENCE_V5.2.0_UI_HANDOFF.md](docs/CLAUDE_FOR_SCIENCE_V5.2.0_UI_HANDOFF.md) | v5.2.0 scientific-console UI refresh for the portal and linked full-length/domain atlas workbenches, with visual acceptance checks |
-| [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment and operational scope |
+| [portal/DEPLOY.md](portal/DEPLOY.md) | Intranet portal deployment, `systemd --user` service, and operational scope |
+| [docs/archive/](docs/archive/) | Historical version handoff checklists and validation audit reports |
 
 ## Citation and licenses
 

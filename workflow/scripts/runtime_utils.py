@@ -69,7 +69,14 @@ def stage_qc_structures(
     pdb_dir: str | os.PathLike,
     output_dir: str | os.PathLike,
 ) -> list[str]:
-    """Hard-link or copy exactly the QC-passing PDB files into a search directory."""
+    """Stage QC-passing PDB/mmCIF files into a canonical PDB search directory.
+
+    Plain `.pdb` files are hard-linked (or copied); `.pdb.gz`, `.cif`, `.mmcif`,
+    and gzipped mmCIF files are converted into standardized `.pdb` files so all
+    downstream tools receive uniform PDB coordinates.
+    """
+    from structure_io import convert_structure_to_pdb, staged_pdb_name
+
     source_dir = Path(pdb_dir)
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
@@ -85,14 +92,12 @@ def stage_qc_structures(
             source = source_dir / filename
             if not source.is_file():
                 raise FileNotFoundError(f"QC-passing structure is missing: {source}")
-            target = destination / filename
+            out_name = staged_pdb_name(filename)
+            target = destination / out_name
             if target.exists():
-                raise ValueError(f"duplicate QC structure filename: {filename}")
-            try:
-                os.link(source, target)
-            except OSError:
-                shutil.copy2(source, target)
-            staged.append(filename)
+                raise ValueError(f"duplicate QC structure filename: {out_name}")
+            convert_structure_to_pdb(source, target)
+            staged.append(out_name)
     if not staged:
         raise ValueError(
             "No structures passed QC; adjust qc.min_length, qc.max_length, or "

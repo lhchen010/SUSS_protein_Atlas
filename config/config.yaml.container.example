@@ -1,0 +1,153 @@
+# ============================================================
+# SUSS Atlas Engine — single-strain config (TEMPLATE)
+# Copy to config/config.yaml and edit strain / input / tools.
+# Lab-standard analysis defaults are pre-set and normally don't change.
+# Keep one copy of this file with each atlas for provenance.
+# ============================================================
+
+# ---- This run's strain + input (edit every run) ----
+strain:
+  code: cor                       # short strain code (filename prefix <code>_<accession>)
+  species: "Colletotrichum orbiculare"
+  host: "Nicotiana benthamiana / Cucurbitaceae"
+  host_range: ""                  # optional: single-host / broad-host
+  clade: ""                       # optional: species complex / phylogenetic clade
+  is_colletotrichum: true         # false = non-Colletotrichum outgroup
+
+input:
+  pdb_dir: "input/pdb"            # mature AF2 PDBs, named <code>_<accession>.pdb
+  seqs_fasta: "input/seqs.fasta"  # optional; if absent, sequences are extracted from structures
+  rnaseq_xlsx: ""
+  accession_pattern: ""           # optional custom regex for non-standard protein IDs (auto-supports GenBank, RefSeq, UniProt, AFDB, custom stems)                 # optional; empty = no RNA-seq (card cell left blank)
+  auto_geo: false                 # true = try to fetch RNA-seq from GEO when rnaseq_xlsx is empty
+
+# ---- Lab-standard defaults (settled; normally unchanged) ----
+clustering:
+  foldseek_tm: 0.5                # accepted fold-similarity threshold
+  whole_fold_min_coverage: 0.5    # both proteins must align over at least this fraction
+  tm_symmetric: min               # min | max | mean
+  alignment_type: 1               # global TM-align for full-length families
+  exhaustive_search: true         # accurate for a small atlas; false for large discovery sets
+  search_evalue: inf              # TM/coverage below decide accepted whole-fold edges
+  max_seqs: 100000                # prevent per-query hit truncation in all-vs-all atlases
+  leiden_resolution: 1.0          # standard starting point
+  leiden_seed: 42
+  min_family_size: 2              # 2-3 member families are flagged "n small" on the card
+
+domain_clustering:
+  alignment_type: 2               # local Foldseek 3Di+AA alignment
+  evalue: 0.001
+  sensitivity: 9.5
+  min_probability: 0.5
+  min_lddt: 0.5                   # rejects high-probability but structurally weak bridges
+  borderline_lddt_margin: 0.05    # diagnostic only; never changes D-family membership
+  min_alntm: 0.0                  # optional local alignment TM threshold
+  min_aligned_residues: 40        # prevents short motifs from becoming domain families
+  min_shorter_coverage: 0.0       # allows a shared domain in two multi-domain proteins
+  interval_overlap: 0.5
+  leiden_resolution: 1.0
+  leiden_seed: 42
+  min_family_size: 2
+
+structural_conservation:
+  pair_threshold: 0.5             # score a column only when >=50% of structure pairs support it
+
+classification:
+  blast_evalue: 0.001             # labels the SUSS divergence spectrum (NOT used to split families).
+  min_reciprocal_coverage: 0.5    # both proteins need this HSP coverage to count as detected
+                                  # core_SUSS = structurally similar (TM >= threshold) but BLAST-undetectable
+                                  # at this e-value. Set 1.0 to catch all detectable homology, 1e-3 for stricter.
+
+qc:
+  min_plddt: 50                    # mean AlphaFold confidence, 0-100
+  max_length: 1000                 # mature structure length counted from CA residues
+  min_length: 50                   # lower for short secreted proteins; report the chosen cutoff
+
+signals:                          # locked; not recommended to change
+  foldtree_metrics: [foldtree, alntmscore, lddt]
+  foldtree_rooting:
+    primary: mad
+    fallback: midpoint
+    small_family_max: 3
+  esm_model: esm1b_t33_650M_UR50S
+  plm_strategy: masked-marginals
+  esm_scope: family_representatives  # F representatives + F singletons + independent D hubs
+                                     # domain_members / all_proteins are exhaustive, high-cost modes
+  esm_workers: 1                  # increase only after confirming GPU memory; 4070 12 GB can use 2
+  pockets: [fpocket, p2rank]
+  min_rate4site_sequences: 4
+
+# ---- Which analyses to run (can differ per strain) ----
+steps:
+  qc: true                        # always on
+  cluster: true                   # always on
+  tm_refine: true                 # US-align within-family TM (algorithm-independent cross-check of Foldseek)
+  classify: true                  # BLAST classification; off = no SUSS spectrum labels
+  domain_cluster: true            # local structural domain families, separate from F families
+  sequence_msa: true              # MAFFT on the hub's homologous subgroup
+  conservation: true              # Rate4Site when at least four homologs are available
+  pocket: true                    # fpocket + P2Rank pocket detection
+  esm: true                       # ESM-1b mutational tolerance (GPU, slower)
+  foldtree: true                  # structural phylogeny (x3 metrics per family)
+  domain_foldtree: false          # optional FoldTree on all D families; expensive at atlas scale
+  annotate: true                  # 4-tool annotation (InterProScan is Linux-only; see README)
+  rnaseq: auto                    # auto = run if rnaseq_xlsx set, else skip; true/false to force
+  cards: true                     # six-panel cards
+  atlas: true                     # interactive HTML
+
+output:
+  analysis_scope: both            # full | domain | both; one HTML shows the selected workbenches
+  html_mode: single               # single (self-contained + foldcomp) | backend (lazy-load)
+  atlas_name: "cor_suss_atlas"
+  allow_fallback_html: false      # true only for debugging; production renderer errors fail the run
+  project_title: ""               # header title; empty = auto "<species> secretome · SUSS structural atlas".
+                                  #   Editable (e.g. "Lab X — Co SUSS atlas"). Family/protein counts are appended.
+
+# ---- Tool paths — EDIT THESE for your machine ----
+# Conda-installed tools (see environment.yml) resolve on $PATH, so the bare command name
+# P2Rank's AlphaFold profile does not interpret the PDB B-factor field as an
+# experimental B-factor. AlphaFold structures store pLDDT in that field.
+pocket:
+  p2rank_profile: alphafold        # alphafold (recommended here) or default
+
+# works after `conda activate suss-atlas`. Tools you install elsewhere: give the absolute path.
+# Platform: all conda tools below have macOS builds (osx-64 + Apple Silicon). The one
+# Linux-only tool is InterProScan (leave blank on macOS — see README "Annotation on macOS").
+tools:
+  # --- conda / bioconda (bare name works on $PATH; macOS + Linux) ---
+  foldseek: foldseek              # bioconda; all-vs-all structural search + clustering
+  foldmason: foldmason            # bioconda; multiple-structure alignment (MSA / superpose order)
+  mafft: mafft                    # sequence MSA for homologous subgroups
+  fasttree: FastTree              # sequence relationship tree
+  rate4site: rate4site            # bioconda; per-site conservation
+  blastp: blastp                  # bioconda: blast; sequence-identity spectrum
+  makeblastdb: makeblastdb        # bioconda: blast
+  fpocket: fpocket                # bioconda; pocket detection (invoked via PATH by sasa_pocket.py)
+
+  # --- installed separately (give the path where you put it) ---
+  usalign: /opt/tools/bin/USalign                # github pylelab/USalign; g++ one-file build, macOS+Linux.
+                                  #   Independent-algorithm TM cross-check. Bare name works if on PATH.
+  p2rank: /opt/p2rank/prank                   # github rdkit/p2rank OR bioconda p2rank; needs Java 17
+  p2rank_java_env: ""             # optional: a conda env name that has Java 17 (leave "" if java17 already on PATH)
+  conda: conda                    # used only when p2rank_java_env is set
+  fold_tree: /opt/tools/fold_tree   # github DessimozLab/fold_tree (clone dir); structural phylogeny
+  foldtree_snakemake: snakemake   # executable used by the FoldTree sub-workflow
+  foldtree_foldseek: foldseek     # Foldseek executable visible to FoldTree
+  foldtree_extra_path: ""         # optional PATH prefix for FoldTree dependencies
+  esm_scan: /opt/tools/ESM-Scan/esmscan.py   # github xuebingwu/ESM-Scan; ESM-1b mutational tolerance (PyTorch)
+  esm_python: python              # a python with torch+esm installed (CPU or GPU/MPS ok)
+
+  # --- annotation tools (all optional; annotate step degrades gracefully if blank) ---
+  # InterProScan is 64-bit LINUX ONLY — leave blank on macOS (Pfam domains skipped;
+  #   protein names + effector still populate). Docker/EBI-API alternatives: see README.
+  interproscan: ""                # /path/to/interproscan.sh   (Linux only; blank = skip Pfam)
+  effectorp: ""         # github; effector prediction (Python, cross-platform)
+  deeptmhmm: ""                   # /path/to/DeepTMHMM predict.py (optional; only fills n_TMR; blank = skip)
+  deeptmhmm_python: python        # a python with torch+h5py (only used if deeptmhmm set)
+
+  # --- external database directory (downloaded by scripts/setup_databases.sh) ---
+  foldseek_db_dir: /databases/foldseek_db    # holds pdb100 + afdb_swissprot (annotation)
+  afdb_swissprot_name_map: ""     # optional CSV/TSV with target,name columns
+
+resources:
+  annotate_threads: 8             # max threads for Foldseek annotation (capped by Snakemake --cores)

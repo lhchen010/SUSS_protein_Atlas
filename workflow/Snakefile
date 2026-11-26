@@ -223,7 +223,7 @@ rule domain_workbench:
 
 # checkpoint: family count is decided here; downstream per-family targets expand from it
 checkpoint cluster:
-    input:  tsv=f"{RESULTS}/foldseek_allvsall.tsv", qc=f"{RESULTS}/qc.csv"
+    input:  tsv=f"{RESULTS}/foldseek_allvsall.tsv", qc=f"{RESULTS}/qc.csv", pdb_dir=f"{RESULTS}/qc_pdb"
     output: families=f"{RESULTS}/families.csv",
             members=f"{RESULTS}/members.csv",
             edges=f"{RESULTS}/edges.csv",
@@ -268,7 +268,7 @@ rule sequence_subgroups:
 
 # ---------- second half: all proteins incl. singletons ----------
 rule sasa_pocket:
-    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv",
+    input:  pdb_dir=f"{RESULTS}/qc_pdb", qc=f"{RESULTS}/qc.csv",
             members=f"{RESULTS}/members.csv", famdir=MEMBER_DIR
     output:
         sasa=f"{RESULTS}/sasa_all.csv",
@@ -287,7 +287,7 @@ rule sasa_pocket:
 # cutoff) from the residues of that structure. Always produced, so downstream rules
 # have one guaranteed input regardless of whether the user supplied sequences.
 rule seqs:
-    input:  pdb_dir=PDB_DIR, qc=f"{RESULTS}/qc.csv"
+    input:  pdb_dir=f"{RESULTS}/qc_pdb", qc=f"{RESULTS}/qc.csv"
     output: f"{RESULTS}/seqs.fasta"
     params: provided=config["input"].get("seqs_fasta", "")
     script: "scripts/build_seqs.py"
@@ -310,7 +310,7 @@ rule esm:
     script: "scripts/esm_scan.py"
 
 rule annotate:
-    input:  pdb_dir=PDB_DIR,
+    input:  pdb_dir=f"{RESULTS}/qc_pdb",
             seqs=f"{RESULTS}/seqs.fasta",
             members=f"{RESULTS}/members.csv"
     output: member=f"{RESULTS}/member_annotation.csv", cluster=f"{RESULTS}/cluster_annotation.csv"
@@ -320,6 +320,7 @@ rule annotate:
             afdb_name_map=TOOLS.get("afdb_swissprot_name_map", ""),
             effp_python=TOOLS.get("effectorp_python", "python3"),
             tmhmm_python=TOOLS.get("deeptmhmm_python", TOOLS.get("esm_python", "python"))
+    threads: int(config.get("resources", {}).get("annotate_threads", 8))
     script: "scripts/annotate.py"
 
 # ---------- second half: per-family (n>=2) ----------
@@ -327,7 +328,7 @@ rule msa:
     # FoldMason easy-msa PREFIX writes PREFIX_aa.fa (AA MSA), PREFIX_3di.fa (3Di MSA),
     # PREFIX.nw (guide tree), PREFIX.html. Rename the AA MSA -> {fam}.aln (rate4site input)
     # and the 3Di MSA -> {fam}.fasta so declared outputs match what the tool produces.
-    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=f"{RESULTS}/qc_pdb"
     output: aln=f"{FAM_DIR}/{{fam}}/{{fam}}.aln", fasta=f"{FAM_DIR}/{{fam}}/{{fam}}.fasta"
     params: bin=TOOLS["foldmason"], pref=lambda w: f"{FAM_DIR}/{w.fam}/{w.fam}_fm"
     shell:
@@ -373,7 +374,7 @@ rule sequence_analysis:
     script: "scripts/sequence_analysis.py"
 
 rule foldtree:
-    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=f"{RESULTS}/qc_pdb"
     output:
         trees=[f"{FAM_DIR}/{{fam}}/{{fam}}_{m}.nwk" for m in config["signals"]["foldtree_metrics"]],
         status=f"{FAM_DIR}/{{fam}}/{{fam}}_foldtree_status.json"
@@ -395,7 +396,7 @@ rule signature:
             structural=f"{FAM_DIR}/{{fam}}/{{fam}}_structural_conservation.csv",
             sasa=f"{RESULTS}/sasa_all.csv", pockets=f"{RESULTS}/pockets.json",
             famfile=f"{MEMBER_DIR}/{{fam}}.members.txt",
-            pdb_dir=PDB_DIR
+            pdb_dir=f"{RESULTS}/qc_pdb"
     output: f"{FAM_DIR}/{{fam}}/{{fam}}_signature.csv",
             f"{FAM_DIR}/{{fam}}/{{fam}}_conservation.pdb"
     params: strain=STRAIN
@@ -415,7 +416,7 @@ rule matrices:
 # family only (O(m^2), m small) so cost stays trivial even at thousands of proteins. Not used
 # for clustering — cards/family_summary show both and flag disagreeing pairs.
 rule tm_refine:
-    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=PDB_DIR
+    input:  famfile=f"{MEMBER_DIR}/{{fam}}.members.txt", pdb_dir=f"{RESULTS}/qc_pdb"
     output: tm=f"{FAM_DIR}/{{fam}}/{{fam}}_TM_usalign.csv"
     params: usalign=TOOLS.get("usalign", ""), code=STRAIN,
             sym=config["clustering"]["tm_symmetric"]
@@ -527,7 +528,7 @@ rule cross_edges:
 
 rule atlas_structure_db:
     input:
-        pdb_dir=PDB_DIR,
+        pdb_dir=f"{RESULTS}/qc_pdb",
         members=f"{RESULTS}/members.csv",
         subgroups=f"{RESULTS}/sequence_subgroups.csv",
         domains=f"{RESULTS}/domain_members.csv"
