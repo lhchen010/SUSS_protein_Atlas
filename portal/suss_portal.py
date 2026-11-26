@@ -7,8 +7,8 @@ fresh per-job engine copy, runs the preflight `validate` rule (blocks on format 
 then launches the full snakemake pipeline in the background. A status page polls progress
 and links to the finished atlas HTML.
 
-Runs in the `suss` conda env on the 4070. No framework — BaseHTTPRequestHandler + cgi
-multipart (python 3.11). Bind 127.0.0.1 behind tailscale; NOT hardened for public exposure.
+Runs in the `suss` conda env on the 4070. No framework — BaseHTTPRequestHandler + stdlib
+multipart parser (python 3.11-3.14+). Bind 127.0.0.1 behind tailscale; NOT hardened for public exposure.
 
 Env knobs (set before launch):
   SUSS_ENGINE_TAR   path to a suss_engine_vX.tar.gz (fresh engine per job)
@@ -19,9 +19,14 @@ Env knobs (set before launch):
                     to reach it from a browser over tailscale — tailscale is a private
                     encrypted network, so binding its interface is the intended intranet use)
 """
-import os, sys, io, cgi, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid, glob
+import os, sys, io, json, time, shutil, tarfile, subprocess, threading, html, re, secrets, uuid, glob
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_PORTAL_DIR = os.path.dirname(os.path.abspath(__file__))
+if _PORTAL_DIR not in sys.path:
+    sys.path.insert(0, _PORTAL_DIR)
+from multipart_form import parse_form
 
 ENGINE_TAR = os.environ.get("SUSS_ENGINE_TAR", os.path.expanduser("~/suss_engine.tar.gz"))
 RUNS_DIR   = os.environ.get("SUSS_RUNS_DIR", os.path.expanduser("~/suss_portal_runs"))
@@ -93,7 +98,7 @@ def _normalized_pdb_name(filename, strain_code):
 
 
 def _uploaded_filename(item):
-    """Read a cgi.FieldStorage filename without invoking its unsupported truth test."""
+    """Read an uploaded form-part filename without invoking a truth test."""
     return item.filename if item is not None else ""
 
 
@@ -1052,6 +1057,7 @@ class H(BaseHTTPRequestHandler):
                 candidates = [
                     os.path.join(engine, "input", "pdb", f"{name}.pdb"),
                     *glob.glob(os.path.join(engine, "input", "pdb", f"*_{name}.pdb")),
+                    *glob.glob(os.path.join(engine, "results", "qc_pdb", f"*{name}*.pdb")),
                     *glob.glob(os.path.join(engine, "input", "pdb", f"*{name}*.pdb")),
                 ]
                 path = next((p for p in candidates if os.path.isfile(p)), "")
@@ -1105,9 +1111,10 @@ class H(BaseHTTPRequestHandler):
             self._send(page("<h1>404</h1>"), code=404)
 
     def _handle_delete(self):
-        ctype = self.headers.get("Content-Type", "")
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
-                                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
+        try:
+            form = parse_form(self.rfile, self.headers, max_bytes=1024 * 1024)
+        except ValueError:
+            self._send(page("<h1>Invalid request</h1>"), code=400); return
         if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
             self._send(page("<h1>Invalid request token</h1>"), code=403); return
         jid = os.path.basename(form.getfirst("id", ""))   # basename guards against path traversal
@@ -1142,11 +1149,10 @@ class H(BaseHTTPRequestHandler):
                 length = 0
             if length <= 0 or length > 30 * 1024 * 1024:
                 self._send(page("<h1>Invalid structure upload</h1>"), code=413); return
-            ctype = self.headers.get("Content-Type", "")
-            form = cgi.FieldStorage(
-                fp=self.rfile, headers=self.headers,
-                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
-            )
+            try:
+                form = parse_form(self.rfile, self.headers, max_bytes=30 * 1024 * 1024)
+            except ValueError:
+                self._send(page("<h1>Invalid structure upload</h1>"), code=400); return
             if not secrets.compare_digest(form.getfirst("csrf", ""), CSRF_TOKEN):
                 self._send(page("<h1>Invalid request token</h1>"), code=403); return
             jid = os.path.basename(form.getfirst("id", ""))
@@ -1172,9 +1178,11 @@ class H(BaseHTTPRequestHandler):
         if active >= MAX_ACTIVE_JOBS:
             self._send(page("<h1>Server busy</h1><p>The analysis slot is in use. Try again after the active run finishes.</p>"), code=429)
             return
-        ctype = self.headers.get("Content-Type", "")
-        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
-                                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype})
+        try:
+            form = parse_form(self.rfile, self.headers, max_bytes=MAX_UPLOAD_BYTES)
+        except ValueError:
+            self._send(page("<h1>Upload rejected</h1><p>Malformed or oversized form upload.</p>"), code=400)
+            return
         # required structure upload
         pdb_item = form["pdb_tar"] if "pdb_tar" in form else None
         pdb_bytes = pdb_item.file.read() if (pdb_item is not None and pdb_item.filename) else b""
